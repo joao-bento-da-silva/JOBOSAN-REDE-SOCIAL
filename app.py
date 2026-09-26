@@ -1,4 +1,4 @@
-# ==================================================
+# ================================================== 
 # © 2026 JOBOSAN — SISTEMA COMPLETO FUNCIONAL ✅
 # REDE SOCIAL · CADASTRO PERMANENTE · MÍDIA · JOGOS · IA · DNA
 # PORTA 5000 ✅
