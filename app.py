@@ -36,7 +36,9 @@ cloudinary.config(
 )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-BANCO_DADOS = os.path.join(BASE_DIR, "jobosan_novo.db")
+BANCO_DADOS = os.path.join(os.path.dirname(BASE_DIR), "jobosan_novo.db")
+
+
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "mp4", "mov", "avi", "webm"}
 
 EMAIL_DONO = "joasilva19577@gmail.com"
