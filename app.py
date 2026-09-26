@@ -1,4 +1,4 @@
-# ================================================== 
+# ==================================================
 # © 2026 JOBOSAN — SISTEMA COMPLETO FUNCIONAL ✅
 # REDE SOCIAL · CADASTRO PERMANENTE · MÍDIA · JOGOS · IA · DNA
 # PORTA 5000 ✅
@@ -17,7 +17,7 @@ import cloudinary
 import cloudinary.uploader
 
 # --------------------------------------------------
-# ⚙️ CONFIGURAÇÕES
+# ⚙️ CONFIGURAÇÕES — CORRIGIDO ✅
 # --------------------------------------------------
 NOME_APLICACAO = "Jobosan"
 CHAVE_SESSAO_PADRAO = "JOBOSAN_REDE_SOCIAL_2026_SEGURA"
@@ -36,21 +36,25 @@ cloudinary.config(
 )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-BANCO_DADOS = os.path.join(os.path.dirname(BASE_DIR), "jobosan_novo.db")
 
+# ✅ FALTAVA ESSA LINHA — BANCO DE DADOS
+BANCO_DADOS = os.path.join(BASE_DIR, "jobosan_novo.db")
 
+PASTA_TEMP = "/tmp" if os.path.exists("/tmp") else os.path.join(BASE_DIR, "temp_midia")
+os.makedirs(PASTA_TEMP, exist_ok=True)
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "mp4", "mov", "avi", "webm"}
 
 EMAIL_DONO = "joasilva19577@gmail.com"
 SENHA_MESTRA_ACESSO = "JOBOSAn@2026#DONO"
 
+
 # --------------------------------------------------
 # 🗄️ BANCO DE DADOS
 # --------------------------------------------------
 def get_db():
-    conn = sqlite3.connect(BANCO_DADOS)
-    conn.row_factory = sqlite3.Row
-    return conn
+   conn = sqlite3.connect(BANCO_DADOS)
+   conn.row_factory = sqlite3.Row
+   return conn
 
 def init_db():
     conn = get_db()
@@ -95,8 +99,9 @@ def init_db():
     )""")
     conn.commit()
     conn.close()
+    
 
-init_db()
+    init_db()
 
 # --------------------------------------------------
 # 🔒 FUNÇÕES DE VERIFICAÇÃO
@@ -923,3 +928,4 @@ def plataforma():
 if __name__ == "__main__":
     porta = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=porta, debug=True)
+ 
