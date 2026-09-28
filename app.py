@@ -1,7 +1,8 @@
 from datetime import datetime, timedelta
-from flask import Flask, request, session, redirect, url_for, render_template_string, flash, jsonify
+from flask import Flask, request, session, redirect, url_for, render_template_string, flash, send_from_directory
 import hashlib
 import os
+import random
 import sqlite3
 import uuid
 
@@ -12,6 +13,8 @@ app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=3650)
 
 NOME_APP = "Jobosan Rede Social"
 BANCO_ARQUIVO = "jobosan_rede.db"
+PASTA_MIDIAS = "midias"
+os.makedirs(PASTA_MIDIAS, exist_ok=True)
 
 # ==============================================
 # BANCO DE DADOS
@@ -31,6 +34,7 @@ def init_db():
             nome TEXT NOT NULL,
             email TEXT UNIQUE NOT NULL,
             senha TEXT NOT NULL,
+            pontos INTEGER DEFAULT 0,
             data_cadastro TEXT NOT NULL
         )
     """)
@@ -47,12 +51,13 @@ def init_db():
     """)
     
     c.execute("""
-        CREATE TABLE IF NOT EXISTS curtidas (
+        CREATE TABLE IF NOT EXISTS jogadas (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             usuario_id INTEGER NOT NULL,
-            postagem_id INTEGER NOT NULL,
-            FOREIGN KEY (usuario_id) REFERENCES usuarios(id),
-            FOREIGN KEY (postagem_id) REFERENCES postagens(id)
+            tipo_jogo TEXT NOT NULL,
+            acertou INTEGER,
+            pontos_ganhos INTEGER DEFAULT 0,
+            data_hora TEXT NOT NULL
         )
     """)
     
@@ -62,7 +67,7 @@ def init_db():
 init_db()
 
 # ==============================================
-# TEMPLATES — TUDO AQUI DENTRO, SEM ARQUIVOS EXTERNOS
+# TEMPLATES
 # ==============================================
 TPL_BASE = """
 <!DOCTYPE html>
@@ -88,15 +93,23 @@ TPL_BASE = """
         .sucesso { background:#d4edda; color:#155724; }
         .erro { background:#f8d7da; color:#721c24; }
         img, video { max-width:100%; border-radius:8px; margin:10px 0; }
+        .menu { display:flex; gap:10px; flex-wrap:wrap; margin:15px 0; }
+        .menu a { flex:1; min-width:120px; text-align:center; padding:10px; background:#e8f0fe; color:#1a73e8; border-radius:6px; text-decoration:none; font-weight:bold; }
+        .menu a:hover { background:#d2e3fc; }
+        .carta { display:inline-block; width:60px; height:90px; line-height:90px; text-align:center; border:2px solid #1a73e8; border-radius:8px; font-size:24px; font-weight:bold; margin:5px; background:white; }
     </style>
 </head>
 <body>
     <div class="cabecalho">
         <h1>🚀 Jobosan Rede Social</h1>
         {% if session.usuario_id %}
-            <p>Bem-vindo, {{ session.nome }}! | 
-            <a href="{{ url_for('inicio') }}">Início</a> | 
-            <a href="{{ url_for('sair') }}">Sair</a></p>
+            <p>Bem-vindo, {{ session.nome }}! 🏆 Pontos: {{ session.pontos }}</p>
+            <div class="menu">
+                <a href="{{ url_for('inicio') }}">Início</a>
+                <a href="{{ url_for('jogo_cartas') }}">🃏 Cartas</a>
+                <a href="{{ url_for('jogo_numero') }}">🔢 Segredo</a>
+                <a href="{{ url_for('sair') }}">Sair</a>
+            </div>
         {% else %}
             <p><a href="{{ url_for('entrar') }}">Entrar</a> | 
             <a href="{{ url_for('cadastrar') }}">Cadastrar</a></p>
@@ -143,7 +156,7 @@ TPL_CADASTRO = TPL_BASE.replace("{% block conteudo %}{% endblock %}", """
 
 TPL_INICIO = TPL_BASE.replace("{% block conteudo %}{% endblock %}", """
 <h2>📢 Postar Algo</h2>
-<form method="post" enctype="multipart/form-data">
+<form action="{{ url_for('postar') }}" method="post" enctype="multipart/form-data">
     <textarea name="texto" placeholder="Escreva algo..." rows="4"></textarea>
     <input type="file" name="midia" accept="image/*,video/*">
     <button type="submit">Publicar</button>
@@ -156,10 +169,14 @@ TPL_INICIO = TPL_BASE.replace("{% block conteudo %}{% endblock %}", """
         <span class="data">{{ p.data }}</span>
         {% if p.texto %}<p style="margin:10px 0;">{{ p.texto }}</p>{% endif %}
         {% if p.midia %}
-            {% if p.midia.endswith(('.jpg','.jpeg','.png','.gif')) %}
+            {% set ext = p.midia.split('.')[-1].lower() %}
+            {% if ext in ['jpg','jpeg','png','gif'] %}
                 <img src="{{ p.midia }}" alt="mídia">
             {% else %}
-                <video controls><source src="{{ p.midia }}">Seu navegador não suporta vídeo</video>
+                <video controls style="width:100%; border-radius:8px;">
+                    <source src="{{ p.midia }}">
+                    Seu navegador não suporta vídeo.
+                </video>
             {% endif %}
         {% endif %}
     </div>
@@ -168,6 +185,48 @@ TPL_INICIO = TPL_BASE.replace("{% block conteudo %}{% endblock %}", """
 {% endfor %}
 """)
 
+TPL_CARTAS = TPL_BASE.replace("{% block conteudo %}{% endblock %}", """
+<h2>🃏 Jogo das Cartas</h2>
+<p>Adivinhe a carta! 1 a 13</p>
+<form method="post">
+    <input type="number" name="chute" min="1" max="13" placeholder="Seu palpite" required>
+    <button type="submit">Jogar</button>
+</form>
+{% if resultado %}
+<div class="caixa">
+    <p>{{ resultado }}</p>
+    {% if acertou %}<p>🎉 Ganhou {{ pontos }} pontos!</p>{% endif %}
+</div>
+{% endif %}
+""")
+
+TPL_NUMERO = TPL_BASE.replace("{% block conteudo %}{% endblock %}", """
+<h2>🔢 Segredo dos Números</h2>
+<p>Adivinhe o número entre 1 e 100!</p>
+<form method="post">
+    <input type="number" name="chute" min="1" max="100" placeholder="Seu palpite" required>
+    <button type="submit">Tentar</button>
+</form>
+{% if dica %}
+<div class="caixa">
+    <p>{{ dica }}</p>
+    {% if acertou %}<p>🎉 Acertou! +{{ pontos }} pontos!</p>{% endif %}
+</div>
+{% endif %}
+""")
+
+# ==============================================
+# FUNÇÃO ATUALIZAR PONTOS NA SESSÃO
+# ==============================================
+def atualizar_pontos_sessao(usuario_id):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT pontos FROM usuarios WHERE id = ?", (usuario_id,))
+    res = c.fetchone()
+    conn.close()
+    if res:
+        session["pontos"] = res["pontos"]
+
 # ==============================================
 # ROTAS
 # ==============================================
@@ -175,6 +234,7 @@ TPL_INICIO = TPL_BASE.replace("{% block conteudo %}{% endblock %}", """
 def inicio():
     if "usuario_id" not in session:
         return redirect(url_for("entrar"))
+    atualizar_pontos_sessao(session["usuario_id"])
     
     conn = get_db()
     c = conn.cursor()
@@ -206,7 +266,7 @@ def cadastrar():
         try:
             conn = get_db()
             c = conn.cursor()
-            c.execute("INSERT INTO usuarios (nome, email, senha, data_cadastro) VALUES (?, ?, ?, ?)",
+            c.execute("INSERT INTO usuarios (nome, email, senha, data_cadastro, pontos) VALUES (?, ?, ?, ?, 0)",
                      (nome, email, senha_hash, agora))
             conn.commit()
             conn.close()
@@ -226,13 +286,14 @@ def entrar():
         
         conn = get_db()
         c = conn.cursor()
-        c.execute("SELECT id, nome FROM usuarios WHERE email = ? AND senha = ?", (email, senha_hash))
+        c.execute("SELECT id, nome, pontos FROM usuarios WHERE email = ? AND senha = ?", (email, senha_hash))
         usuario = c.fetchone()
         conn.close()
         
         if usuario:
             session["usuario_id"] = usuario["id"]
             session["nome"] = usuario["nome"]
+            session["pontos"] = usuario["pontos"]
             flash(f"Bem-vindo, {usuario['nome']}!", "sucesso")
             return redirect(url_for("inicio"))
         else:
@@ -257,14 +318,11 @@ def postar():
     if "midia" in request.files:
         arq = request.files["midia"]
         if arq.filename:
-            import uuid
             ext = arq.filename.rsplit(".", 1)[-1].lower()
             nome_arq = f"{uuid.uuid4().hex}.{ext}"
-            pasta = "midias"
-            os.makedirs(pasta, exist_ok=True)
-            caminho = os.path.join(pasta, nome_arq)
+            caminho = os.path.join(PASTA_MIDIAS, nome_arq)
             arq.save(caminho)
-            midia_url = f"/{pasta}/{nome_arq}"
+            midia_url = f"/midias/{nome_arq}"
     
     if not texto and not midia_url:
         flash("Escreva algo ou envie uma imagem/vídeo!", "erro")
@@ -278,21 +336,90 @@ def postar():
     conn.commit()
     conn.close()
     
-    flash("Publicado com sucesso! ✅", "sucesso")
+    flash("✅ Publicado com sucesso!", "sucesso")
     return redirect(url_for("inicio"))
 
 @app.route("/midias/<nome>")
 def servir_midia(nome):
-    from flask import send_from_directory
-    return send_from_directory("midias", nome)
+    return send_from_directory(PASTA_MIDIAS, nome)
+
+@app.route("/jogo-cartas", methods=["GET", "POST"])
+def jogo_cartas():
+    if "usuario_id" not in session:
+        return redirect(url_for("entrar"))
+    
+    resultado = ""
+    acertou = False
+    pontos_ganhos = 0
+    
+    if request.method == "POST":
+        chute = int(request.form.get("chute", 0))
+        carta = random.randint(1, 13)
+        
+        if chute == carta:
+            acertou = True
+            pontos_ganhos = 10
+            resultado = f"🎉 A carta era {carta}! Acertou!"
+        else:
+            resultado = f"❌ A carta era {carta}. Tente de novo!"
+        
+        if acertou:
+            conn = get_db()
+            c = conn.cursor()
+            c.execute("UPDATE usuarios SET pontos = pontos + ? WHERE id = ?", (pontos_ganhos, session["usuario_id"]))
+            c.execute("INSERT INTO jogadas (usuario_id, tipo_jogo, acertou, pontos_ganhos, data_hora) VALUES (?, ?, 1, ?, ?)",
+                     (session["usuario_id"], "cartas", pontos_ganhos, datetime.now().strftime("%d/%m/%Y %H:%M")))
+            conn.commit()
+            conn.close()
+            atualizar_pontos_sessao(session["usuario_id"])
+    
+    return render_template_string(TPL_CARTAS, titulo="Jogo das Cartas", resultado=resultado, acertou=acertou, pontos=pontos_ganhos)
+
+@app.route("/jogo-numero", methods=["GET", "POST"])
+def jogo_numero():
+    if "usuario_id" not in session:
+        return redirect(url_for("entrar"))
+    
+    dica = ""
+    acertou = False
+    pontos_ganhos = 0
+    
+    if "segredo" not in session:
+        session["segredo"] = random.randint(1, 100)
+    
+    if request.method == "POST":
+        chute = int(request.form.get("chute", 0))
+        segredo = session["segredo"]
+        
+        if chute == segredo:
+            acertou = True
+            pontos_ganhos = 15
+            dica = f"🎉 PARABÉNS! O número era {segredo}! Acertou!"
+            session.pop("segredo", None)
+            if acertou:
+                conn = get_db()
+                c = conn.cursor()
+                c.execute("UPDATE usuarios SET pontos = pontos + ? WHERE id = ?", (pontos_ganhos, session["usuario_id"]))
+                c.execute("INSERT INTO jogadas (usuario_id, tipo_jogo, acertou, pontos_ganhos, data_hora) VALUES (?, ?, 1, ?, ?)",
+                         (session["usuario_id"], "numero", pontos_ganhos, datetime.now().strftime("%d/%m/%Y %H:%M")))
+                conn.commit()
+                conn.close()
+                atualizar_pontos_sessao(session["usuario_id"])
+        elif chute < segredo:
+            dica = "🔼 O número é MAIOR!"
+        else:
+            dica = "🔽 O número é MENOR!"
+    
+    return render_template_string(TPL_NUMERO, titulo="Segredo dos Números", dica=dica, acertou=acertou, pontos=pontos_ganhos)
 
 # ==============================================
 # INICIAR SERVIDOR
 # ==============================================
 if __name__ == "__main__":
     print("="*50)
-    print("🚀 JOBOSAN REDE SOCIAL — INICIANDO...")
-    print("✅ Banco de dados:", BANCO_ARQUIVO)
+    print("🚀 JOBOSAN — REDE SOCIAL + JOGOS COMPLETA")
+    print("✅ Banco:", BANCO_ARQUIVO)
+    print("✅ Mídias:", PASTA_MIDIAS)
     print("✅ Porta: 5000")
     print("="*50)
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=True)
