@@ -3,7 +3,6 @@ import sqlite3
 import random
 import uuid
 from datetime import datetime
-from werkzeug.utils import secure_filename
 from flask import Flask, render_template_string, request, redirect, url_for, flash, session
 
 # -------------------------------------------------------------------
@@ -14,12 +13,11 @@ BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 NOME_APLICACAO = "Rede Jobosan"
 EMAIL_DONO = "dono@jobosan.com"
 SENHA_MESTRA_ACESSO = "1234"
-EXTENSOES_PERMITIDAS = {'png', 'jpg', 'jpeg', 'gif', 'mp4', 'mov', 'avi', 'webm'}
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "chave_secreta_jobosan_rede_social")
 
-# Tenta carregar psycopg2 para PostgreSQL (compatível com Render)
+# Suporte ao PostgreSQL para hospedagem no Render
 try:
     import psycopg2
     import psycopg2.extras
@@ -30,16 +28,13 @@ except ImportError:
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # -------------------------------------------------------------------
-# HELPER FUNCTIONS (FUNÇÕES AUXILIARES)
+# FUNÇÕES AUXILIARES
 # -------------------------------------------------------------------
 def usuario_logado():
     return 'usuario_id' in session
 
 def eh_dono():
     return session.get('usuario_email', '').strip().lower() == EMAIL_DONO.lower()
-
-def allowed_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in EXTENSOES_PERMITIDAS
 
 def responder_ia(pergunta):
     pergunta_clean = pergunta.lower().strip()
@@ -54,7 +49,7 @@ def responder_ia(pergunta):
     return f"Não encontrei uma resposta específica para '{pergunta}', mas continuo aprendendo!"
 
 # -------------------------------------------------------------------
-# CONEXÃO E CRIAÇÃO DO BANCO DE DADOS
+# BANCO DE DADOS
 # -------------------------------------------------------------------
 def get_db():
     if DATABASE_URL and POSTGRES_AVAILABLE:
@@ -85,38 +80,30 @@ def init_db():
                 senha TEXT NOT NULL,
                 pontos INTEGER DEFAULT 0,
                 pontos_bentinho INTEGER DEFAULT 0
-            )
-        """)
-        c.execute("""
+            );
             CREATE TABLE IF NOT EXISTS postagens (
                 id SERIAL PRIMARY KEY,
                 usuario_id INTEGER,
                 texto TEXT,
                 arquivo TEXT,
                 data_postagem TEXT
-            )
-        """)
-        c.execute("""
+            );
             CREATE TABLE IF NOT EXISTS curtidas (
                 usuario_id INTEGER,
                 postagem_id INTEGER,
                 PRIMARY KEY (usuario_id, postagem_id)
-            )
-        """)
-        c.execute("""
+            );
             CREATE TABLE IF NOT EXISTS conversas_ia (
                 id SERIAL PRIMARY KEY,
                 usuario_id INTEGER,
                 pergunta TEXT,
                 resposta TEXT,
                 data_hora TEXT
-            )
-        """)
-        c.execute("""
+            );
             CREATE TABLE IF NOT EXISTS regras_ia (
                 pergunta_chave TEXT PRIMARY KEY,
                 resposta_customizada TEXT
-            )
+            );
         """)
     else:
         c.execute("""
@@ -127,7 +114,7 @@ def init_db():
                 senha TEXT NOT NULL,
                 pontos INTEGER DEFAULT 0,
                 pontos_bentinho INTEGER DEFAULT 0
-            )
+            );
         """)
         c.execute("""
             CREATE TABLE IF NOT EXISTS postagens (
@@ -136,14 +123,14 @@ def init_db():
                 texto TEXT,
                 arquivo TEXT,
                 data_postagem TEXT
-            )
+            );
         """)
         c.execute("""
             CREATE TABLE IF NOT EXISTS curtidas (
                 usuario_id INTEGER,
                 postagem_id INTEGER,
                 PRIMARY KEY (usuario_id, postagem_id)
-            )
+            );
         """)
         c.execute("""
             CREATE TABLE IF NOT EXISTS conversas_ia (
@@ -152,13 +139,13 @@ def init_db():
                 pergunta TEXT,
                 resposta TEXT,
                 data_hora TEXT
-            )
+            );
         """)
         c.execute("""
             CREATE TABLE IF NOT EXISTS regras_ia (
                 pergunta_chave TEXT PRIMARY KEY,
                 resposta_customizada TEXT
-            )
+            );
         """)
     
     conn.commit()
@@ -167,7 +154,7 @@ def init_db():
 init_db()
 
 # -------------------------------------------------------------------
-# ROTAS DE AUTENTICAÇÃO E INÍCIO
+# ROTAS PRINCIPAIS, LOGIN E CADASTRO
 # -------------------------------------------------------------------
 @app.route('/')
 def index():
@@ -309,7 +296,7 @@ def sair():
     return redirect(url_for("login"))
 
 # -------------------------------------------------------------------
-# PLATAFORMA PRINCIPAL
+# PLATAFORMA FEED E INTERAÇÕES
 # -------------------------------------------------------------------
 @app.route("/plataforma", methods=["GET", "POST"])
 def plataforma():
@@ -392,17 +379,17 @@ def plataforma():
     
     posts_html = ""
     for p in postagens:
-        pid, texto, arquivo_url, data, autor, curtidas, curtiu = p['id'], p['texto'], p['arquivo'], p['data_postagem'], p['nome'], p['total_curtidas'], p['curtiu']
+        pid, texto, data, autor, curtidas, curtiu = p['id'], p['texto'], p['data_postagem'], p['nome'], p['total_curtidas'], p['curtiu']
         posts_html += f'''<div id="post-{pid}" class="bg-gray-800 p-4 rounded-lg border border-yellow-500/30 mb-4">
             <h4 class="font-bold text-yellow-400">{autor}</h4><p class="text-sm text-gray-400">{data}</p>
             {f'<p class="my-3 whitespace-pre-wrap">{texto}</p>' if texto else ''}
             <div class="mt-3 pt-3 border-t border-gray-700">
-                <a href="/plataforma?curtir={pid}&pagina={pagina}#post-{pid}" class="text-{'red' if curtiu else 'gray'}-400">👍 {curtidas} Curtida{'s' if curtidas != 1 else ''}</a>
+                <a href="/plataforma?curtir={pid}&pagina={pagina}#post-{pid}" class="text-{'red' if curtiu else 'gray'}-400 font-bold">👍 {curtidas} Curtida{'s' if curtidas != 1 else ''}</a>
             </div>
         </div>'''
     
     if not posts_html:
-        posts_html = '<p class="text-center text-gray-500 py-10">Ainda não há postagens. Seja o primeiro a compartilhar!</p>'
+        posts_html = '<p class="text-center text-gray-500 py-10">Ainda não há postagens. Seja o primeiro a publicar!</p>'
     
     btn_anterior = f'<a href="/plataforma?pagina={pagina - 1}" class="bg-gray-700 hover:bg-gray-600 text-yellow-400 font-bold px-4 py-2 rounded-lg">← Anterior</a>' if pagina > 1 else '<span class="text-gray-600 bg-gray-800 px-4 py-2 rounded-lg cursor-not-allowed">← Anterior</span>'
     btn_proxima = f'<a href="/plataforma?pagina={pagina + 1}" class="bg-gray-700 hover:bg-gray-600 text-yellow-400 font-bold px-4 py-2 rounded-lg">Próxima →</a>' if pagina < total_paginas else '<span class="text-gray-600 bg-gray-800 px-4 py-2 rounded-lg cursor-not-allowed">Próxima →</span>'
@@ -413,7 +400,7 @@ def plataforma():
         {btn_proxima}
     </div>'''
 
-    botao_admin = f'<a href="/area_privada" class="bg-red-600 text-white px-4 py-2 rounded-lg text-sm ml-2">🔒 Área Privada</a>' if email_usuario.strip().lower() == EMAIL_DONO.lower() else ""
+    botao_admin = f'<a href="/area_privada" class="bg-red-600 text-white px-4 py-2 rounded-lg text-sm ml-2 font-bold">🔒 Área Privada</a>' if email_usuario.strip().lower() == EMAIL_DONO.lower() else ""
     
     return render_template_string(f'''<!DOCTYPE html>
 <html lang="pt-br">
@@ -501,14 +488,14 @@ def plataforma():
 @app.route("/area_privada", methods=["GET", "POST"])
 def area_privada():
     if not usuario_logado() or not eh_dono():
-        return '''<div style="text-align:center;padding:50px;background:#0f172a;color:white;">
+        return '''<div style="text-align:center;padding:50px;background:#0f172a;color:white;font-family:sans-serif;">
             <h2 style="color:red;">🚫 ACESSO NEGADO — Área exclusiva do dono</h2>
             <br><a href="/plataforma" style="color:#f59e0b;">Voltar</a>
         </div>'''
     if request.method == "POST":
         if request.form.get("senha_mestra") == SENHA_MESTRA_ACESSO:
             return redirect(url_for("painel_dono"))
-        return '''<div style="text-align:center;padding:50px;background:#0f172a;color:white;">
+        return '''<div style="text-align:center;padding:50px;background:#0f172a;color:white;font-family:sans-serif;">
             <h2 style="color:red;">❌ Senha incorreta!</h2>
             <br><a href="/area_privada" style="color:#f59e0b;">Tentar novamente</a>
         </div>'''
@@ -519,7 +506,7 @@ def area_privada():
     <title>🔒 Área Privada</title>
     <style>body{background:linear-gradient(180deg,#0f172a,#1e293b);color:white;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:Arial,sans-serif;}
     .caixa{background:rgba(15,23,42,0.9);padding:40px;border-radius:12px;border:2px solid #f59e0b;max-width:400px;width:90%;text-align:center;}
-    input{width:100%;padding:12px;margin:8px 0;background:#020617;border:1px solid #334155;color:white;border-radius:6px;}
+    input{width:100%;padding:12px;margin:8px 0;background:#020617;border:1px solid #334155;color:white;border-radius:6px;box-sizing:border-box;}
     button{width:100%;padding:12px;background:#f59e0b;color:black;border:none;border-radius:6px;font-weight:bold;cursor:pointer;}
     a{color:#f59e0b;text-decoration:none;display:block;margin-top:20px;}</style>
 </head>
@@ -556,7 +543,7 @@ def painel_dono():
 </head>
 <body class="bg-gray-900 text-gray-200 p-6 max-w-4xl mx-auto">
     <h1 class="text-3xl font-bold text-yellow-500 mb-6">⚙️ PAINEL DO DONO</h1>
-    <a href="/plataforma" class="text-yellow-500 mb-4 inline-block">← Voltar</a>
+    <a href="/plataforma" class="text-yellow-500 mb-4 inline-block font-bold">← Voltar</a>
     <div class="grid grid-cols-2 gap-4">
         <div class="bg-gray-800 p-4 rounded-lg border border-yellow-500/30">
             <p class="text-gray-400">Total de Usuários</p>
@@ -571,7 +558,7 @@ def painel_dono():
 </html>''')
 
 # -------------------------------------------------------------------
-# ROTAS DA IA
+# IA E JOGOS
 # -------------------------------------------------------------------
 @app.route("/responder_ia", methods=["POST"])
 def responder_ia_rota():
@@ -614,9 +601,6 @@ def ensinar_ia():
             return f"❌ Erro ao ensinar IA: {str(e)}"
     return "Preencha todos os campos!", 400
 
-# -------------------------------------------------------------------
-# JOGOS
-# -------------------------------------------------------------------
 @app.route("/jogo_cartas", methods=["GET", "POST"])
 def jogo_cartas():
     if not usuario_logado():
@@ -685,7 +669,7 @@ def jogo_cartas():
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="p-6 max-w-2xl mx-auto bg-gray-900 text-gray-200">
-    <a href="/plataforma" class="text-yellow-500">← Voltar</a>
+    <a href="/plataforma" class="text-yellow-500 font-bold">← Voltar</a>
     <h1 class="text-4xl font-bold text-yellow-500 text-center my-6">🃏 Jogo das Cartas</h1>
     <p class="text-center text-lg mb-4">Fase {fase}/4 · Pontos: {pontos}</p>
     {f'<div class="text-center p-3 rounded-lg mb-4 text-lg font-bold {"bg-green-900/50 text-green-400" if "✅" in msg or "🏆" in msg else "bg-red-900/50 text-red-400"}">{msg}</div>' if msg else ''}
@@ -793,18 +777,17 @@ def jogo_bentinho():
             <input type="text" name="resposta" placeholder="Digite o inverso..." class="w-full bg-gray-900 border-2 border-yellow-500 rounded-lg text-center text-2xl text-yellow-400 p-3 font-mono" autocomplete="off" required>
             <div class="flex gap-3">
                 <button type="submit" class="flex-1 bg-yellow-600 text-black font-bold py-3 rounded-lg text-lg">✅ Decifrar</button>
-                <button type="submit" name="acao" value="reiniciar" class="bg-gray-600 text-white px-6 py-3 rounded-lg">🔄 Reiniciar</button>
+                <button type="submit" name="acao" value="reiniciar" class="bg-gray-600 text-white px-6 py-3 rounded-lg font-bold">🔄 Reiniciar</button>
             </div>
         </form>
-        <p class="text-center mt-6"><a href="/plataforma" class="text-yellow-500">← Voltar</a></p>
+        <p class="text-center mt-6"><a href="/plataforma" class="text-yellow-500 font-bold">← Voltar</a></p>
     </div>
 </body>
 </html>''')
 
 # -------------------------------------------------------------------
-# INICIALIZAÇÃO
+# EXECUÇÃO DO APP
 # -------------------------------------------------------------------
 if __name__ == "__main__":
     porta = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=porta, debug=True)
- 
