@@ -3,12 +3,17 @@ import sqlite3
 import random
 import uuid
 from datetime import datetime
-from flask import Flask, render_template_string, request, redirect, url_for, flash, session
+from werkzeug.utils import secure_filename
+from flask import Flask, render_template_string, request, redirect, url_for, flash, session, send_from_directory
 
 # -------------------------------------------------------------------
 # CONFIGURAÇÕES E CONSTANTES GLOBAIS
 # -------------------------------------------------------------------
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'mp4', 'webm', 'mov', 'avi'}
 
 NOME_APLICACAO = "Rede Jobosan"
 EMAIL_DONO = "dono@jobosan.com"
@@ -16,6 +21,8 @@ SENHA_MESTRA_ACESSO = "1234"
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "chave_secreta_jobosan_rede_social")
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # Limite de 50MB para uploads
 
 # Suporte ao PostgreSQL para hospedagem no Render
 try:
@@ -30,6 +37,9 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 # -------------------------------------------------------------------
 # FUNÇÕES AUXILIARES
 # -------------------------------------------------------------------
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
 def usuario_logado():
     return 'usuario_id' in session
 
@@ -154,6 +164,13 @@ def init_db():
 init_db()
 
 # -------------------------------------------------------------------
+# ROTA PARA SERVIR MÍDIAS ENVIADAS
+# -------------------------------------------------------------------
+@app.route('/uploads/<filename>')
+def uploaded_file(filename):
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+
+# -------------------------------------------------------------------
 # ROTAS PRINCIPAIS, LOGIN E CADASTRO
 # -------------------------------------------------------------------
 @app.route('/')
@@ -193,17 +210,23 @@ def cadastro():
 <html lang="pt-br">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cadastro — {{ nome_app }}</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-900 text-gray-100 min-h-screen flex items-center justify-center p-4">
-    <div class="bg-gray-800 p-8 rounded-xl border border-yellow-500/30 max-w-md w-full">
-        <h2 class="text-2xl font-bold text-yellow-500 text-center mb-6">📝 Criar Conta</h2>
+    <div class="bg-gray-800 p-8 rounded-2xl border border-yellow-500/40 max-w-md w-full shadow-2xl">
+        <div class="text-center mb-6">
+            <h1 class="text-4xl font-black text-yellow-500 tracking-wider mb-1">JOBOSAN</h1>
+            <p class="text-xs uppercase tracking-widest text-gray-400 font-bold">Rede Social & Plataforma</p>
+        </div>
+        
+        <h2 class="text-xl font-bold text-gray-200 text-center mb-6 border-b border-gray-700 pb-3">📝 Criar Nova Conta</h2>
         
         {% with messages = get_flashed_messages(with_categories=true) %}
           {% if messages %}
             {% for category, message in messages %}
-              <div class="mb-4 p-3 rounded-lg text-sm font-bold text-center {% if category == 'danger' %}bg-red-900/50 text-red-400{% else %}bg-green-900/50 text-green-400{% endif %}">
+              <div class="mb-4 p-3 rounded-lg text-sm font-bold text-center {% if category == 'danger' %}bg-red-900/50 text-red-400 border border-red-700{% else %}bg-green-900/50 text-green-400 border border-green-700{% endif %}">
                 {{ message }}
               </div>
             {% endfor %}
@@ -212,23 +235,24 @@ def cadastro():
 
         <form method="POST" class="space-y-4">
             <div>
-                <label class="block text-sm text-gray-400 mb-1">Nome</label>
-                <input type="text" name="nome" required class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white">
+                <label class="block text-sm text-gray-300 font-medium mb-1">Nome Completo</label>
+                <input type="text" name="nome" required placeholder="Seu nome" class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white focus:border-yellow-500 focus:outline-none">
             </div>
             <div>
-                <label class="block text-sm text-gray-400 mb-1">E-mail</label>
-                <input type="email" name="email" required class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white">
+                <label class="block text-sm text-gray-300 font-medium mb-1">E-mail</label>
+                <input type="email" name="email" required placeholder="seuemail@exemplo.com" class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white focus:border-yellow-500 focus:outline-none">
             </div>
             <div>
-                <label class="block text-sm text-gray-400 mb-1">Senha</label>
-                <input type="password" name="senha" required class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white">
+                <label class="block text-sm text-gray-300 font-medium mb-1">Senha</label>
+                <input type="password" name="senha" required placeholder="••••••••" class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white focus:border-yellow-500 focus:outline-none">
             </div>
-            <button type="submit" class="w-full bg-yellow-600 hover:bg-yellow-500 text-black font-bold py-3 rounded-lg transition">Cadastrar</button>
+            <button type="submit" class="w-full bg-yellow-500 hover:bg-yellow-400 text-black font-extrabold py-3 rounded-lg transition shadow-lg text-base">Cadastrar na Jobosan</button>
         </form>
-        <p class="text-center text-sm text-gray-400 mt-4">Já tem uma conta? <a href="/login" class="text-yellow-500">Faça login</a></p>
+        <p class="text-center text-sm text-gray-400 mt-6">Já tem uma conta? <a href="/login" class="text-yellow-500 hover:underline font-bold">Faça login</a></p>
     </div>
 </body>
 </html>''', nome_app=NOME_APLICACAO)
+
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -257,17 +281,23 @@ def login():
 <html lang="pt-br">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login — {{ nome_app }}</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-900 text-gray-100 min-h-screen flex items-center justify-center p-4">
-    <div class="bg-gray-800 p-8 rounded-xl border border-yellow-500/30 max-w-md w-full">
-        <h2 class="text-2xl font-bold text-yellow-500 text-center mb-6">🔑 Entrar na Plataforma</h2>
+    <div class="bg-gray-800 p-8 rounded-2xl border border-yellow-500/40 max-w-md w-full shadow-2xl">
+        <div class="text-center mb-6">
+            <h1 class="text-4xl font-black text-yellow-500 tracking-wider mb-1">JOBOSAN</h1>
+            <p class="text-xs uppercase tracking-widest text-gray-400 font-bold">Rede Social & Plataforma</p>
+        </div>
+
+        <h2 class="text-xl font-bold text-gray-200 text-center mb-6 border-b border-gray-700 pb-3">🔑 Entrar na Plataforma</h2>
         
         {% with messages = get_flashed_messages(with_categories=true) %}
           {% if messages %}
             {% for category, message in messages %}
-              <div class="mb-4 p-3 rounded-lg text-sm font-bold text-center {% if category == 'danger' %}bg-red-900/50 text-red-400{% else %}bg-green-900/50 text-green-400{% endif %}">
+              <div class="mb-4 p-3 rounded-lg text-sm font-bold text-center {% if category == 'danger' %}bg-red-900/50 text-red-400 border border-red-700{% else %}bg-green-900/50 text-green-400 border border-green-700{% endif %}">
                 {{ message }}
               </div>
             {% endfor %}
@@ -276,19 +306,20 @@ def login():
 
         <form method="POST" class="space-y-4">
             <div>
-                <label class="block text-sm text-gray-400 mb-1">E-mail</label>
-                <input type="email" name="email" required class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white">
+                <label class="block text-sm text-gray-300 font-medium mb-1">E-mail</label>
+                <input type="email" name="email" required placeholder="seuemail@exemplo.com" class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white focus:border-yellow-500 focus:outline-none">
             </div>
             <div>
-                <label class="block text-sm text-gray-400 mb-1">Senha</label>
-                <input type="password" name="senha" required class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white">
+                <label class="block text-sm text-gray-300 font-medium mb-1">Senha</label>
+                <input type="password" name="senha" required placeholder="••••••••" class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white focus:border-yellow-500 focus:outline-none">
             </div>
-            <button type="submit" class="w-full bg-yellow-600 hover:bg-yellow-500 text-black font-bold py-3 rounded-lg transition">Entrar</button>
+            <button type="submit" class="w-full bg-yellow-500 hover:bg-yellow-400 text-black font-extrabold py-3 rounded-lg transition shadow-lg text-base">Entrar na Jobosan</button>
         </form>
-        <p class="text-center text-sm text-gray-400 mt-4">Não tem uma conta? <a href="/cadastro" class="text-yellow-500">Cadastre-se</a></p>
+        <p class="text-center text-sm text-gray-400 mt-6">Não tem uma conta? <a href="/cadastro" class="text-yellow-500 hover:underline font-bold">Cadastre-se</a></p>
     </div>
 </body>
 </html>''', nome_app=NOME_APLICACAO)
+
 
 @app.route("/sair")
 def sair():
@@ -296,7 +327,7 @@ def sair():
     return redirect(url_for("login"))
 
 # -------------------------------------------------------------------
-# PLATAFORMA FEED E INTERAÇÕES
+# PLATAFORMA FEED E INTERAÇÕES (COM FOTOS E VÍDEOS)
 # -------------------------------------------------------------------
 @app.route("/plataforma", methods=["GET", "POST"])
 def plataforma():
@@ -313,18 +344,25 @@ def plataforma():
     itens_por_pagina = 20
     offset = (pagina - 1) * itens_por_pagina
 
-    # Criar Postagem
+    # Criar Postagem (Texto + Mídia)
     if request.method == "POST":
         texto = request.form.get("texto_post", "").strip()
+        file = request.files.get("midia_post")
+        nome_arquivo_salvo = None
 
-        if texto:
+        if file and file.filename != '' and allowed_file(file.filename):
+            ext = file.filename.rsplit('.', 1)[1].lower()
+            nome_arquivo_salvo = f"{uuid.uuid4().hex}.{ext}"
+            file.save(os.path.join(app.config['UPLOAD_FOLDER'], nome_arquivo_salvo))
+
+        if texto or nome_arquivo_salvo:
             conn, db_type = get_db()
             try:
                 c = conn.cursor()
                 param = "%s" if db_type == "postgres" else "?"
                 c.execute(
-                    f"INSERT INTO postagens (usuario_id, texto, arquivo, data_postagem) VALUES ({param}, {param}, NULL, {param})",
-                    (usuario_id, texto, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                    f"INSERT INTO postagens (usuario_id, texto, arquivo, data_postagem) VALUES ({param}, {param}, {param}, {param})",
+                    (usuario_id, texto, nome_arquivo_salvo, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
                 )
                 conn.commit()
             finally:
@@ -379,10 +417,25 @@ def plataforma():
     
     posts_html = ""
     for p in postagens:
-        pid, texto, data, autor, curtidas, curtiu = p['id'], p['texto'], p['data_postagem'], p['nome'], p['total_curtidas'], p['curtiu']
+        pid, texto, arquivo, data, autor, curtidas, curtiu = p['id'], p['texto'], p['arquivo'], p['data_postagem'], p['nome'], p['total_curtidas'], p['curtiu']
+        
+        midia_html = ""
+        if arquivo:
+            ext = arquivo.rsplit('.', 1)[1].lower() if '.' in arquivo else ''
+            url_midia = url_for('uploaded_file', filename=arquivo)
+            if ext in ['mp4', 'webm', 'mov', 'avi']:
+                midia_html = f'''<div class="mt-3 overflow-hidden rounded-lg bg-black flex justify-center">
+                    <video controls class="max-h-96 w-full object-contain"><source src="{url_midia}">Seu navegador não suporta vídeos.</video>
+                </div>'''
+            elif ext in ['png', 'jpg', 'jpeg', 'gif']:
+                midia_html = f'''<div class="mt-3 overflow-hidden rounded-lg bg-black flex justify-center">
+                    <img src="{url_midia}" alt="Mídia da postagem" class="max-h-96 w-full object-contain">
+                </div>'''
+
         posts_html += f'''<div id="post-{pid}" class="bg-gray-800 p-4 rounded-lg border border-yellow-500/30 mb-4">
             <h4 class="font-bold text-yellow-400">{autor}</h4><p class="text-sm text-gray-400">{data}</p>
             {f'<p class="my-3 whitespace-pre-wrap">{texto}</p>' if texto else ''}
+            {midia_html}
             <div class="mt-3 pt-3 border-t border-gray-700">
                 <a href="/plataforma?curtir={pid}&pagina={pagina}#post-{pid}" class="text-{'red' if curtiu else 'gray'}-400 font-bold">👍 {curtidas} Curtida{'s' if curtidas != 1 else ''}</a>
             </div>
@@ -426,9 +479,13 @@ def plataforma():
         </div>
 
         <div id="tab-rede" class="tab-content">
-            <form method="POST" class="bg-gray-800 p-5 rounded-lg border border-yellow-500/30 mb-6">
+            <form method="POST" enctype="multipart/form-data" class="bg-gray-800 p-5 rounded-lg border border-yellow-500/30 mb-6">
                 <h3 class="text-yellow-500 font-bold mb-3">✍️ Nova Postagem</h3>
-                <textarea name="texto_post" rows="3" placeholder="Escreva algo..." class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white mb-3" required></textarea>
+                <textarea name="texto_post" rows="3" placeholder="Escreva algo..." class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white mb-3"></textarea>
+                <div class="mb-3">
+                    <label class="block text-sm text-gray-400 mb-1">Anexar Foto ou Vídeo:</label>
+                    <input type="file" name="midia_post" accept="image/*,video/*" class="w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-yellow-600 file:text-black hover:file:bg-yellow-500 cursor-pointer">
+                </div>
                 <button type="submit" class="bg-yellow-600 text-black font-bold py-2 px-6 rounded-lg">📤 Publicar</button>
             </form>
             <h3 class="text-yellow-500 font-bold mb-3">📰 Postagens</h3>
