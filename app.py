@@ -4,7 +4,7 @@ import os
 import uuid
 import cloudinary
 import cloudinary.uploader
-from werkzeug.utils import secure_filename
+from werkzeug.utils import secure_filename  
 
 rede_social_bp = Blueprint('rede_social', __name__)
 
