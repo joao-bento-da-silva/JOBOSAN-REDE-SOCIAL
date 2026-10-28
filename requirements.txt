@@ -1,4 +1,6 @@
+
 Flask
 psycopg2-binary
 cloudinary
 Werkzeug
+gunicorn
