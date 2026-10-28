@@ -1,4 +1,4 @@
-from flask import Flask, render_template, redirect, url_for, session, request
+ from flask import Flask, render_template, redirect, url_for, session, request
 import os
 import psycopg2
 import psycopg2.extras
@@ -11,7 +11,7 @@ except ImportError:
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "chave_secreta_padrao")
 
-# Layout base para manter todo o design e aspeto visual intactos
+# Layout base do site
 LAYOUT = """
 <!DOCTYPE html>
 <html lang="pt">
@@ -57,16 +57,30 @@ def index():
 
 @app.route("/entrar", methods=["GET", "POST"])
 def entrar():
-    # Página de login/entrada existente no seu projeto
     if request.method == "POST":
-        # Lógica de login...
-        pass
-    
+        # Lógica de login simples para teste ou a que já tem implementada
+        nome = request.form.get("nome")
+        if nome:
+            conn, db_type = get_db()
+            c = conn.cursor()
+            ph = "%s" if db_type == "postgres" else "?"
+            c.execute(f"SELECT id FROM usuarios WHERE nome = {ph}", (nome,))
+            user = c.fetchone()
+            if user:
+                session["usuario_id"] = user["id"]
+            else:
+                c.execute(f"INSERT INTO usuarios (nome) VALUES ({ph})", (nome,))
+                conn.commit()
+                c.execute(f"SELECT id FROM usuarios WHERE nome = {ph}", (nome,))
+                session["usuario_id"] = c.fetchone()["id"]
+            conn.close()
+            return redirect(url_for("rede_social.plataforma"))
+            
     conteudo = '''
     <div class="bloco">
         <h2>Entrar no Jobosan</h2>
         <form method="POST">
-            <label>Utilizador:</label>
+            <label>O seu Nome:</label>
             <input type="text" name="nome" required>
             <button type="submit" style="margin-top: 15px;">Entrar</button>
         </form>
@@ -74,6 +88,7 @@ def entrar():
     '''
     return render_template_string(LAYOUT, conteudo=conteudo)
 
+# Bloco essencial com a porta para o Render e execução local
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
