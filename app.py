@@ -174,7 +174,7 @@ def plataforma():
     conteudo += '</div>'
 
     return render_template_string(LAYOUT_REDE, conteudo=conteudo)
-    @app.route("/sair")
+@app.route("/sair")
 def sair():
     session.clear()
     return redirect(url_for("entrar"))
