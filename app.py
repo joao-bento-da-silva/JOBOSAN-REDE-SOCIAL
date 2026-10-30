@@ -4,7 +4,8 @@ import secrets
 from datetime import timedelta
 from functools import wraps
 from datetime import datetime, timezone
-from flask import Flask, Response
+from werkzeug.utils import secure_filename
+from flask import Flask, Response, send_from_directory
 from flask import (
     Flask, render_template_string, request, redirect,
     url_for, session, flash, jsonify
@@ -18,10 +19,25 @@ app = Flask(__name__)
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
 app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
 
+# Configuração de Uploads de Mídia
+UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), "uploads")
+ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp", "mp4", "webm", "mov"}
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # Limite de 50MB por arquivo
+
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
 DATABASE_PATH = os.environ.get(
     "DATABASE_PATH",
     os.path.join(os.path.dirname(__file__), "jobosan_jogos.db")
 )
+
+def arquivo_permitido(filename):
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
+@app.route('/uploads/<filename>')
+def serve_upload(filename):
+    return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
 
 @app.route('/google510f4f340be76af9.html')
 def google_verification():
@@ -84,7 +100,19 @@ def inicializar_banco():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 usuario_id INTEGER NOT NULL,
                 conteudo TEXT NOT NULL,
+                midia_url TEXT,
                 criado_em TEXT NOT NULL,
+                FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS curtidas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                post_id INTEGER NOT NULL,
+                usuario_id INTEGER NOT NULL,
+                criado_em TEXT NOT NULL,
+                UNIQUE(post_id, usuario_id),
+                FOREIGN KEY(post_id) REFERENCES posts(id),
                 FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
             )
         """)
@@ -131,6 +159,11 @@ LAYOUT_GERAL = """
         .post-card { background: #252525; padding: 15px; border-radius: 6px; margin-bottom: 15px; border-left: 4px solid #ffcc00; }
         .post-autor { font-weight: bold; color: #ffcc00; margin-bottom: 5px; }
         .post-data { font-size: 0.75rem; color: #888; margin-bottom: 10px; }
+        .post-midia { margin-top: 10px; max-width: 100%; border-radius: 6px; overflow: hidden; }
+        .post-midia img, .post-midia video { max-width: 100%; max-height: 400px; display: block; border-radius: 4px; }
+        .btn-curtir { display: inline-flex; align-items: center; gap: 5px; background: #333; color: #ffcc00; padding: 6px 12px; border-radius: 4px; text-decoration: none; font-size: 0.9rem; margin-top: 10px; border: 1px solid #444; }
+        .btn-curtir:hover { background: #444; }
+        .btn-curtir.curtiu { background: #ffcc00; color: #111; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -255,37 +288,85 @@ def sair():
     session.clear()
     return redirect(url_for("index"))
 
+@app.route("/curtir/<int:post_id>", methods=["POST"])
+@login_obrigatorio
+def curtir(post_id):
+    uid = session["usuario_id"]
+    with conectar() as conn:
+        ja_curtiu = conn.execute(
+            "SELECT id FROM curtidas WHERE post_id = ? AND usuario_id = ?",
+            (post_id, uid)
+        ).fetchone()
+        
+        if ja_curtiu:
+            conn.execute("DELETE FROM curtidas WHERE id = ?", (ja_curtiu["id"],))
+        else:
+            conn.execute(
+                "INSERT INTO curtidas (post_id, usuario_id, criado_em) VALUES (?, ?, ?)",
+                (post_id, uid, agora())
+            )
+    return redirect(url_for("painel"))
+
 @app.route("/painel", methods=["GET", "POST"])
 @login_obrigatorio
 def painel():
     if request.method == "POST":
         conteudo_post = request.form.get("conteudo", "").strip()
-        if len(conteudo_post) > 0:
+        midia = request.files.get("midia")
+        midia_url = None
+
+        if midia and midia.filename != "" and arquivo_permitido(midia.filename):
+            ext = midia.filename.rsplit(".", 1)[1].lower()
+            nome_arquivo = f"{secrets.token_hex(16)}.{ext}"
+            midia.save(os.path.join(app.config["UPLOAD_FOLDER"], nome_arquivo))
+            midia_url = url_for("serve_upload", filename=nome_arquivo)
+
+        if len(conteudo_post) > 0 or midia_url:
             with conectar() as conn:
                 conn.execute(
-                    "INSERT INTO posts (usuario_id, conteudo, criado_em) VALUES (?, ?, ?)",
-                    (session["usuario_id"], conteudo_post, agora())
+                    "INSERT INTO posts (usuario_id, conteudo, midia_url, criado_em) VALUES (?, ?, ?, ?)",
+                    (session["usuario_id"], conteudo_post, midia_url, agora())
                 )
             flash("Postagem realizada com sucesso!", "sucesso")
         else:
-            flash("O post não pode estar vazio.", "erro")
+            flash("A postagem precisa ter texto ou uma mídia associada.", "erro")
         return redirect(url_for("painel"))
 
     with conectar() as conn:
         posts = conn.execute("""
-            SELECT posts.*, usuarios.nome as autor_nome 
+            SELECT posts.*, usuarios.nome as autor_nome,
+                   (SELECT COUNT(*) FROM curtidas WHERE curtidas.post_id = posts.id) as total_curtidas,
+                   (SELECT COUNT(*) FROM curtidas WHERE curtidas.post_id = posts.id AND curtidas.usuario_id = ?) as usuario_curtiu
             FROM posts 
             JOIN usuarios ON posts.usuario_id = usuarios.id 
             ORDER BY posts.id DESC
-        """).fetchall()
+        """, (session["usuario_id"],)).fetchall()
 
     lista_posts_html = ""
     for p in posts:
+        html_midia = ""
+        if p["midia_url"]:
+            url_m = p["midia_url"]
+            ext = url_m.rsplit(".", 1)[1].lower() if "." in url_m else ""
+            if ext in ["mp4", "webm", "mov"]:
+                html_midia = f'<div class="post-midia"><video src="{url_m}" controls></video></div>'
+            else:
+                html_midia = f'<div class="post-midia"><img src="{url_m}" alt="Mídia do Post"></div>'
+
+        classe_curtiu = "curtiu" if p["usuario_curtiu"] > 0 else ""
+        texto_curtir = "❤️ Curtido" if p["usuario_curtiu"] > 0 else "🤍 Curtir"
+
         lista_posts_html += f"""
         <div class="post-card">
             <div class="post-autor">👤 {p['autor_nome']}</div>
             <div class="post-data">🕒 {p['criado_em'][:19].replace('T', ' ')}</div>
             <div>{p['conteudo']}</div>
+            {html_midia}
+            <form action="{url_for('curtir', post_id=p['id'])}" method="POST" style="margin: 0;">
+                <button type="submit" class="btn-curtir {classe_curtiu}">
+                    {texto_curtir} ({p['total_curtidas']})
+                </button>
+            </form>
         </div>
         """
 
@@ -298,9 +379,13 @@ def painel():
         
         <div style="background: #252525; padding: 20px; border-radius: 6px; margin-bottom: 25px;">
             <h3 style="margin-top: 0; color: #ffcc00;">O que você está pensando?</h3>
-            <form method="POST">
+            <form method="POST" enctype="multipart/form-data">
                 <div class="campo">
-                    <textarea name="conteudo" rows="3" placeholder="Escreva sua postagem aqui..." required></textarea>
+                    <textarea name="conteudo" rows="3" placeholder="Escreva sua postagem aqui..."></textarea>
+                </div>
+                <div class="campo">
+                    <label for="midia">Anexar Foto ou Vídeo:</label>
+                    <input type="file" id="midia" name="midia" accept="image/*,video/*">
                 </div>
                 <button type="submit" class="btn-submit" style="width: auto; padding: 8px 20px;">Publicar</button>
             </form>
@@ -349,4 +434,3 @@ if __name__ == "__main__":
         port=int(os.environ.get("PORT", 5000)),
         debug=False
     )
- 
