@@ -15,6 +15,9 @@ from werkzeug.security import (
 )
 
 app = Flask(__name__)
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({'status': 'OK'}), 200
 
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
 app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
