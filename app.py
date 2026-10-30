@@ -1,4 +1,4 @@
- import os
+import os
 from flask import Flask, Blueprint, render_template_string, request, redirect, url_for, session
 
 app = Flask(__name__)
@@ -42,6 +42,12 @@ LAYOUT_REDE = """
     </style>
 </head>
 <body>
+    
+        .header-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .btn-sair { background: #ef4444; font-size: 12px; padding: 6px 12px; text-decoration: none; border-radius: 6px; color: white; font-weight: bold; }
+    </style>
+</head>
+<body>
     <div class="container">
         <div class="header-top">
             <span>🌐 <b>Jobozan Social</b></span>
@@ -49,6 +55,9 @@ LAYOUT_REDE = """
         </div>
         {{ conteudo | safe }}
     </div>
+
+    <!-- COLOQUE AQUI: Logo antes de fechar o body e o html da string -->
+    <script src="{{ url_for('static', filename='js/validador_tamanho.js') }}"></script>
 </body>
 </html>
 """
