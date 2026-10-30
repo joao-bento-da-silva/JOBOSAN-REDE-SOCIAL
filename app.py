@@ -1,4 +1,4 @@
-import os
+ import os
 import sqlite3
 import secrets
 from datetime import timedelta
@@ -15,7 +15,6 @@ from werkzeug.security import (
 
 app = Flask(__name__)
 
-# Configurações de Sessão e Banco
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
 app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
 
@@ -48,7 +47,6 @@ def sitemap():
 """
     return Response(xml_content, mimetype='application/xml')
 
-# Funções Utilitárias e Banco de Dados
 def agora():
     return datetime.now(timezone.utc).isoformat()
 
@@ -92,14 +90,13 @@ def login_obrigatorio(fn):
         return fn(*args, **kwargs)
     return wrapper
 
-# Layout Geral HTML
 LAYOUT_GERAL = """
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Fuga dos Plebeus - O Xadrez Inverso. Um jogo estratégico criado por João Bento da Silva (JOBOSAN Jogos).">
+    <meta name="description" content="JOBOSAN - Rede Social e Plataforma Digital criada por João Bento da Silva.">
     <meta name="author" content="João Bento da Silva">
     <title>{{ title }}</title>
     <style>
@@ -114,20 +111,6 @@ LAYOUT_GERAL = """
         .flash { padding: 10px; border-radius: 4px; margin-bottom: 5px; font-size: 0.9rem; }
         .flash.erro { background: #800000; color: #fff; }
         .flash.sucesso { background: #006600; color: #fff; }
-        
-        .jogo-layout { display: flex; flex-direction: column; gap: 20px; }
-        @media(min-width: 768px) { .jogo-layout { flex-direction: row; } }
-        .painel-lateral { flex: 1; background: #252525; padding: 15px; border-radius: 6px; }
-        .area-tabuleiro { flex: 2; display: flex; flex-direction: column; align-items: center; }
-        .tabuleiro-xadrez { display: grid; grid-template-columns: repeat(8, 45px); grid-template-rows: repeat(8, 45px); border: 3px solid #444; background: #333; gap: 1px; }
-        .casa { width: 45px; height: 45px; display: flex; align-items: center; justify-content: center; font-size: 24px; cursor: pointer; user-select: none; }
-        .casa.clara { background: #f0d9b5; color: #000; }
-        .casa.escura { background: #b58863; color: #000; }
-        .casa:hover { opacity: 0.8; }
-        .status-alerta { margin-bottom: 10px; font-weight: bold; color: #ffcc00; text-align: center; }
-        .btn-acao { background: #d9534f; color: white; border: none; padding: 10px; width: 100%; border-radius: 4px; cursor: pointer; font-weight: bold; margin-top: 15px; }
-        .btn-acao:hover { background: #c9302c; }
-        
         .auth-container { max-width: 400px; margin: 40px auto; }
         .campo { margin-bottom: 15px; }
         .campo label { display: block; margin-bottom: 5px; color: #ccc; }
@@ -140,12 +123,11 @@ LAYOUT_GERAL = """
 </head>
 <body>
     <header>
-        <h1>🏰 Fuga dos Plebeus</h1>
+        <h1>🌐 JOBOSAN</h1>
         <nav>
             {% if session.get('usuario_id') %}
                 <span>Olá, <strong>{{ session.get('usuario_nome') }}</strong></span>
                 <a href="{{ url_for('painel') }}">Painel</a>
-                <a href="{{ url_for('jogo') }}">Jogar</a>
                 <form action="{{ url_for('sair') }}" method="POST" style="display:inline;">
                     <button type="submit">Sair</button>
                 </form>
@@ -171,13 +153,12 @@ LAYOUT_GERAL = """
     </main>
 
     <footer>
-        <p>&copy; 2026 JOBOSAN Jogos — Criado e Desenvolvido por <strong>João Bento da Silva</strong>. Todos os direitos reservados.</p>
+        <p>&copy; 2026 JOBOSAN — Criado e Desenvolvido por <strong>João Bento da Silva</strong>. Todos os direitos reservados.</p>
     </footer>
 </body>
 </html>
 """
 
-# Template HTML do Cadastro / Registro
 REGISTRO_HTML = """
 <div class="auth-container">
     <h2>Criar Conta</h2>
@@ -202,7 +183,6 @@ REGISTRO_HTML = """
 </div>
 """
 
-# Template HTML de Login
 LOGIN_HTML = """
 <div class="auth-container">
     <h2>Entrar</h2>
@@ -223,27 +203,21 @@ LOGIN_HTML = """
 </div>
 """
 
-# Rotas Principais
 @app.route("/")
 def index():
     if session.get("usuario_id"):
         return redirect(url_for("painel"))
     conteudo = """
     <div style="text-align: center; padding: 30px;">
-        <h2>♟️ Fuga dos Plebeus — O Xadrez Inverso</h2>
-        <p style="font-style: italic; color: #ffcc00; margin: 15px 0;">"Não é força que vence, mas sim a sabedoria de saber para onde ir."</p>
-        <div style="background: #252525; padding: 20px; border-radius: 6px; text-align: left; margin: 20px 0; line-height: 1.6;">
-            <h3 style="color: #ffcc00; margin-top: 0;">📖 A História do Reino de Valverde</h3>
-            <p>Há muito tempo, no Reino de Valverde, o povo simples vivia em paz. Mas um dia, a Corte Real perdeu a razão. O Rei, a Rainha, os Bispos e os soldados decidiram que os plebeus já não tinham lugar no reino. Eles queriam tomar tudo para si.</p>
-            <p>Agora, o reino está fechado. As ruas viraram labirintos vigiados. Os soldados do Rei patrulham cada beco. E só existe uma única saída para a liberdade.</p>
-        </div>
+        <h2>🌐 Bem-vindo à Rede Social JOBOSAN</h2>
+        <p style="font-style: italic; color: #ffcc00; margin: 15px 0;">"Conectando ideias e pessoas."</p>
         <div style="margin-top: 25px;">
-            <a href=""" + url_for('cadastro') + """ style="background: #5cb85c; color: #fff; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold; margin-right: 10px;">Criar Conta e Jogar</a>
+            <a href=""" + url_for('cadastro') + """ style="background: #5cb85c; color: #fff; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold; margin-right: 10px;">Criar Conta</a>
             <a href=""" + url_for('entrar') + """ style="background: #0275d8; color: #fff; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold;">Entrar</a>
         </div>
     </div>
     """
-    return render_template_string(LAYOUT_GERAL, title="Fuga dos Plebeus — JOBOSAN Jogos", content=conteudo)
+    return render_template_string(LAYOUT_GERAL, title="JOBOSAN", content=conteudo)
 
 @app.route("/entrar", methods=["GET", "POST"])
 def entrar():
@@ -275,239 +249,13 @@ def painel():
     with conectar() as conn:
         prog = conn.execute("SELECT * FROM progresso WHERE usuario_id = ?", (session["usuario_id"],)).fetchone()
     
-    pontos = prog["pontos"] if prog else 0
-    fases = prog["fases_concluidas"] if prog else 0
-    partidas = prog["partidas"] if prog else 0
-
     conteudo = f"""
     <div>
-        <h2>Painel do Jogador — Reino de Valverde</h2>
-        <div style="display: flex; gap: 15px; margin: 20px 0;">
-            <div style="background: #252525; padding: 15px; border-radius: 5px; flex: 1;"><h3>Pontos</h3><p style="font-size: 1.5rem; color: #ffcc00;">{pontos}</p></div>
-            <div style="background: #252525; padding: 15px; border-radius: 5px; flex: 1;"><h3>Fases Concluídas</h3><p style="font-size: 1.5rem; color: #5cb85c;">{fases} / 4</p></div>
-            <div style="background: #252525; padding: 15px; border-radius: 5px; flex: 1;"><h3>Partidas</h3><p style="font-size: 1.5rem; color: #5bc0de;">{partidas}</p></div>
-        </div>
-
-        <h3 style="margin-top: 30px; color: #ffcc00;">Estágios da Fuga</h3>
-        <table style="width: 100%; border-collapse: collapse; margin-top: 10px; background: #252525; border-radius: 6px; overflow: hidden;">
-            <thead>
-                <tr style="background: #333; text-align: left;">
-                    <th style="padding: 10px;">Fase</th>
-                    <th style="padding: 10px;">Nome</th>
-                    <th style="padding: 10px;">Desafio</th>
-                    <th style="padding: 10px;">Pontuação</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr style="border-bottom: 1px solid #444;"><td style="padding: 10px;">1</td><td style="padding: 10px;">🌾 A Vila Fechada</td><td style="padding: 10px;">Labirinto pequeno, poucos guardas — aprenda a ler os caminhos</td><td style="padding: 10px; color: #ffcc00;">100 pontos</td></tr>
-                <tr style="border-bottom: 1px solid #444;"><td style="padding: 10px;">2</td><td style="padding: 10px;">🌲 A Floresta Cercada</td><td style="padding: 10px;">Mais paredes, mais soldados — a saída está bem escondida</td><td style="padding: 10px; color: #ffcc00;">250 pontos</td></tr>
-                <tr style="border-bottom: 1px solid #444;"><td style="padding: 10px;">3</td><td style="padding: 10px;">🏰 Os Muros do Reino</td><td style="padding: 10px;">Labirinto complexo, guardas em pontos estratégicos — calma e atenção</td><td style="padding: 10px; color: #ffcc00;">400 pontos</td></tr>
-                <tr><td style="padding: 10px;">4</td><td style="padding: 10px;">🌅 O Último Portão</td><td style="padding: 10px;">Todos os perseguidores te cercam, labirinto enorme, UMA saída apenas — consegue?</td><td style="padding: 10px; color: #ffcc00;">600 pts + Troféu</td></tr>
-            </tbody>
-        </table>
-
-        <div style="text-align: center; margin-top: 35px;">
-            <a href="{url_for('jogo')}" style="background: #f0ad4e; color: #111; padding: 15px 35px; text-decoration: none; border-radius: 6px; font-size: 1.2rem; font-weight: bold;">Iniciar Fuga ♟️</a>
-        </div>
+        <h2>Painel do Usuário — JOBOSAN</h2>
+        <p>Seja bem-vindo à sua área restrita da rede social.</p>
     </div>
     """
-    return render_template_string(LAYOUT_GERAL, title="Painel do Jogador — JOBOSAN", content=conteudo)
-
-@app.route("/jogo")
-@login_obrigatorio
-def jogo():
-    conteudo = """
-    <div class="jogo-layout">
-        <aside class="painel-lateral">
-            <h3 id="titulo-fase-painel" style="color: #ffcc00; margin-top: 0;">Fase 1: A Vila Fechada</h3>
-            <p><strong>Turnos Restantes:</strong> <span id="turnos">20</span></p>
-            <p><strong>Plebeus Vivos:</strong> <span id="plebeus">3</span></p>
-            <p id="descricao-desafio" style="font-size: 0.85rem; color: #bbb; margin-top: 10px;">Labirinto pequeno, poucos guardas — aprenda a ler os caminhos</p>
-            <button id="btn-reiniciar" class="btn-acao">Reiniciar Fase</button>
-        </aside>
-        <section class="area-tabuleiro">
-            <div id="status-msg" class="status-alerta">Toque no seu plebeu (🛡️) para selecioná-lo!</div>
-            <div id="tabuleiro" class="tabuleiro-xadrez"></div>
-        </section>
-    </div>
-    <script>
-        document.addEventListener("DOMContentLoaded", () => {
-            const tabuleiro = document.getElementById("tabuleiro");
-            const statusMsg = document.getElementById("status-msg");
-            const btnReiniciar = document.getElementById("btn-reiniciar");
-            const spanTurnos = document.getElementById("turnos");
-            const spanPlebeus = document.getElementById("plebeus");
-            const tituloFasePainel = document.getElementById("titulo-fase-painel");
-            const descDesafio = document.getElementById("descricao-desafio");
-
-            let faseAtual = 1;
-            let turnos = 20;
-            
-            const dadosFases = {
-                1: { nome: "🌾 A Vila Fechada", desafio: "Labirinto pequeno, poucos guardas — aprenda a ler os caminhos", turnos: 20, saida: {r: 0, c: 7}, plebeusPos: [{r:7, c:2}, {r:7, c:3}, {r:7, c:4}], cortes: [{tipo: 'rei', r: 1, c: 3}, {tipo: 'bispo', r: 2, c: 0}] },
-                2: { nome: "🌲 A Floresta Cercada", desafio: "Mais paredes, mais soldados — a saída está bem escondida", turnos: 18, saida: {r: 0, c: 0}, plebeusPos: [{r:7, c:5}, {r:7, c:6}, {r:7, c:7}], cortes: [{tipo: 'rei', r: 3, c: 2}, {tipo: 'rainha', r: 5, c: 3}, {tipo: 'bispo', r: 1, c: 4}] },
-                3: { nome: "🏰 Os Muros do Reino", desafio: "Labirinto complexo, guardas em pontos estratégicos — calma e atenção", turnos: 15, saida: {r: 0, c: 3}, plebeusPos: [{r:7, c:1}, {r:7, c:2}, {r:7, c:3}, {r:7, c:4}], cortes: [{tipo: 'rei', r: 1, c: 3}, {tipo: 'rainha', r: 3, c: 5}, {tipo: 'bispo', r: 4, c: 1}, {tipo: 'bispo', r: 2, c: 6}] },
-                4: { nome: "🌅 O Último Portão", desafio: "Todos os perseguidores te cercam, labirinto enorme, UMA saída apenas — consegue?", turnos: 12, saida: {r: 0, c: 7}, plebeusPos: [{r:7, c:0}, {r:7, c:1}, {r:7, c:2}, {r:7, c:3}], cortes: [{tipo: 'rei', r: 1, c: 4}, {tipo: 'rainha', r: 3, c: 3}, {tipo: 'rainha', r: 5, c: 6}, {tipo: 'bispo', r: 2, c: 1}] }
-            };
-
-            let config = dadosFases[faseAtual];
-            let plebeus = JSON.parse(JSON.stringify(config.plebeusPos));
-            let cortes = JSON.parse(JSON.stringify(config.cortes));
-            let indiceSelecionado = null;
-
-            function atualizarPainel() {
-                tituloFasePainel.textContent = `Fase ${faseAtual}: ${config.nome}`;
-                descDesafio.textContent = config.desafio;
-                spanTurnos.textContent = turnos;
-                spanPlebeus.textContent = plebeus.length;
-            }
-
-            function desenhar() {
-                tabuleiro.innerHTML = "";
-                atualizarPainel();
-
-                for (let r = 0; r < 8; r++) {
-                    for (let c = 0; c < 8; c++) {
-                        const casa = document.createElement("div");
-                        casa.className = `casa ${(r + c) % 2 === 0 ? 'clara' : 'escura'}`;
-                        
-                        if (r === config.saida.r && c === config.saida.c) {
-                            casa.innerHTML = "🚪";
-                        }
-
-                        plebeus.forEach((p, idx) => {
-                            if (p.r === r && p.c === c) {
-                                casa.innerHTML = "🛡️";
-                                if (indiceSelecionado === idx) {
-                                    casa.style.border = "3px solid #ffcc00";
-                                    casa.style.backgroundColor = "#444";
-                                }
-                            }
-                        });
-
-                        cortes.forEach(cp => {
-                            if (cp.r === r && cp.c === c) {
-                                if (cp.tipo === 'rei') casa.innerHTML = "👑";
-                                else if (cp.tipo === 'rainha') casa.innerHTML = "♕";
-                                else if (cp.tipo === 'bispo') casa.innerHTML = "♗";
-                            }
-                        });
-
-                        let cr = r, cc = c;
-                        casa.addEventListener("click", () => lidarClique(cr, cc));
-                        tabuleiro.appendChild(casa);
-                    }
-                }
-            }
-
-            function lidarClique(r, c) {
-                let clicadoIdx = plebeus.findIndex(p => p.r === r && p.c === c);
-                if (clicadoIdx !== -1) {
-                    indiceSelecionado = clicadoIdx;
-                    statusMsg.textContent = `Plebeu selecionado! Toque em uma casa vizinha para mover.`;
-                    desenhar();
-                    return;
-                }
-
-                if (indiceSelecionado !== null) {
-                    let p = plebeus[indiceSelecionado];
-                    let diffR = Math.abs(r - p.r);
-                    let diffC = Math.abs(c - p.c);
-
-                    if ((diffR + diffC) === 1) {
-                        p.r = r;
-                        p.c = c;
-                        indiceSelecionado = null;
-                        turnos--;
-
-                        if (r === config.saida.r && c === config.saida.c) {
-                            statusMsg.textContent = "✨ Um plebeu escapou para a liberdade!";
-                            plebeus.splice(indiceSelecionado !== null ? indiceSelecionado : 0, 1);
-                        }
-
-                        moverCorte();
-                        verificarCaptura();
-
-                        if (plebeus.length === 0) {
-                            alert(`Vitória na fase ${faseAtual} (${config.nome})!`);
-                            avancarFase();
-                            return;
-                        }
-
-                        if (turnos <= 0) {
-                            alert("❌ O tempo esgotou! A Corte cercou os plebeus. Reiniciando fase.");
-                            reiniciarFase();
-                            return;
-                        }
-
-                        desenhar();
-                    } else {
-                        statusMsg.textContent = " Movimento inválido! Mova apenas 1 casa adjacente.";
-                    }
-                } else {
-                    statusMsg.textContent = " Selecione um plebeu (🛡️) primeiro.";
-                }
-            }
-
-            function moverCorte() {
-                cortes.forEach(cp => {
-                    if (plebeus.length === 0) return;
-                    let alvo = plebeus[0];
-                    let minDist = 999;
-                    plebeus.forEach(p => {
-                        let dist = Math.abs(p.r - cp.r) + Math.abs(p.c - cp.c);
-                        if (dist < minDist) { minDist = dist; alvo = p; }
-                    });
-
-                    if (cp.r < alvo.r) cp.r++;
-                    else if (cp.r > alvo.r) cp.r--;
-                    if (cp.c < alvo.c) cp.c++;
-                    else if (cp.c > alvo.c) cp.c--;
-                });
-            }
-
-            function verificarCaptura() {
-                plebeus = plebeus.filter(p => {
-                    let pego = cortes.some(cp => cp.r === p.r && cp.c === p.c);
-                    if (pego) {
-                        statusMsg.textContent = "⚔️ Um plebeu foi capturado pela Corte!";
-                    }
-                    return !pego;
-                });
-
-                if (plebeus.length === 0) {
-                    alert("⚔️ Todos os plebeus foram capturados!");
-                    reiniciarFase();
-                }
-            }
-
-            function avancarFase() {
-                if (faseAtual < 4) {
-                    faseAtual++;
-                    reiniciarFase();
-                } else {
-                    alert("🏆 Parabéns supremo! Você conquistou o Troféu Liberdade em O Último Portão!");
-                    faseAtual = 1;
-                    reiniciarFase();
-                }
-            }
-
-            function reiniciarFase() {
-                config = dadosFases[faseAtual];
-                turnos = config.turnos;
-                plebeus = JSON.parse(JSON.stringify(config.plebeusPos));
-                cortes = JSON.parse(JSON.stringify(config.cortes));
-                indiceSelecionado = null;
-                statusMsg.textContent = `Fase ${faseAtual} (${config.nome}) iniciada!`;
-                desenhar();
-            }
-
-            btnReiniciar.addEventListener("click", reiniciarFase);
-            reiniciarFase();
-        });
-    </script>
-    """
-    return render_template_string(LAYOUT_GERAL, title="Fuga dos Plebeus — Jogo", content=conteudo)
+    return render_template_string(LAYOUT_GERAL, title="Painel — JOBOSAN", content=conteudo)
 
 @app.route("/cadastro", methods=["GET", "POST"])
 def cadastro():
