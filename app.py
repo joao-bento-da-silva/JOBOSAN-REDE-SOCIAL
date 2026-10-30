@@ -79,6 +79,15 @@ def inicializar_banco():
                 FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS posts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                usuario_id INTEGER NOT NULL,
+                conteudo TEXT NOT NULL,
+                criado_em TEXT NOT NULL,
+                FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
+            )
+        """)
 
 inicializar_banco()
 
@@ -114,11 +123,14 @@ LAYOUT_GERAL = """
         .auth-container { max-width: 400px; margin: 40px auto; }
         .campo { margin-bottom: 15px; }
         .campo label { display: block; margin-bottom: 5px; color: #ccc; }
-        .campo input { width: 100%; padding: 10px; background: #2a2a2a; border: 1px solid #444; color: #fff; border-radius: 4px; box-sizing: border-box; }
+        .campo input, .campo textarea { width: 100%; padding: 10px; background: #2a2a2a; border: 1px solid #444; color: #fff; border-radius: 4px; box-sizing: border-box; }
         .btn-submit { background: #0275d8; color: white; border: none; padding: 10px; width: 100%; border-radius: 4px; font-weight: bold; cursor: pointer; }
         .btn-submit:hover { background: #025aa5; }
         .auth-footer { text-align: center; margin-top: 15px; font-size: 0.9rem; }
         .auth-footer a { color: #5bc0de; text-decoration: none; }
+        .post-card { background: #252525; padding: 15px; border-radius: 6px; margin-bottom: 15px; border-left: 4px solid #ffcc00; }
+        .post-autor { font-weight: bold; color: #ffcc00; margin-bottom: 5px; }
+        .post-data { font-size: 0.75rem; color: #888; margin-bottom: 10px; }
     </style>
 </head>
 <body>
@@ -127,7 +139,7 @@ LAYOUT_GERAL = """
         <nav>
             {% if session.get('usuario_id') %}
                 <span>Olá, <strong>{{ session.get('usuario_nome') }}</strong></span>
-                <a href="{{ url_for('painel') }}">Painel</a>
+                <a href="{{ url_for('painel') }}">Painel / Feed</a>
                 <form action="{{ url_for('sair') }}" method="POST" style="display:inline;">
                     <button type="submit">Sair</button>
                 </form>
@@ -243,19 +255,64 @@ def sair():
     session.clear()
     return redirect(url_for("index"))
 
-@app.route("/painel")
+@app.route("/painel", methods=["GET", "POST"])
 @login_obrigatorio
 def painel():
+    if request.method == "POST":
+        conteudo_post = request.form.get("conteudo", "").strip()
+        if len(conteudo_post) > 0:
+            with conectar() as conn:
+                conn.execute(
+                    "INSERT INTO posts (usuario_id, conteudo, criado_em) VALUES (?, ?, ?)",
+                    (session["usuario_id"], conteudo_post, agora())
+                )
+            flash("Postagem realizada com sucesso!", "sucesso")
+        else:
+            flash("O post não pode estar vazio.", "erro")
+        return redirect(url_for("painel"))
+
     with conectar() as conn:
-        prog = conn.execute("SELECT * FROM progresso WHERE usuario_id = ?", (session["usuario_id"],)).fetchone()
-    
+        posts = conn.execute("""
+            SELECT posts.*, usuarios.nome as autor_nome 
+            FROM posts 
+            JOIN usuarios ON posts.usuario_id = usuarios.id 
+            ORDER BY posts.id DESC
+        """).fetchall()
+
+    lista_posts_html = ""
+    for p in posts:
+        lista_posts_html += f"""
+        <div class="post-card">
+            <div class="post-autor">👤 {p['autor_nome']}</div>
+            <div class="post-data">🕒 {p['criado_em'][:19].replace('T', ' ')}</div>
+            <div>{p['conteudo']}</div>
+        </div>
+        """
+
+    if not lista_posts_html:
+        lista_posts_html = "<p style='color: #888; text-align: center;'>Ainda não há postagens. Seja o primeiro a publicar algo!</p>"
+
     conteudo = f"""
     <div>
-        <h2>Painel do Usuário — JOBOSAN</h2>
-        <p>Seja bem-vindo à sua área restrita da rede social.</p>
+        <h2>Feed da Rede Social — JOBOSAN</h2>
+        
+        <div style="background: #252525; padding: 20px; border-radius: 6px; margin-bottom: 25px;">
+            <h3 style="margin-top: 0; color: #ffcc00;">O que você está pensando?</h3>
+            <form method="POST">
+                <div class="campo">
+                    <textarea name="conteudo" rows="3" placeholder="Escreva sua postagem aqui..." required></textarea>
+                </div>
+                <button type="submit" class="btn-submit" style="width: auto; padding: 8px 20px;">Publicar</button>
+            </form>
+        </div>
+
+        <h3 style="color: #ffcc00; border-bottom: 2px solid #333; padding-bottom: 8px;">Publicações Recentes</h3>
+        <div style="margin-top: 15px;">
+            {lista_posts_html}
+        </div>
     </div>
     """
-    return render_template_string(LAYOUT_GERAL, title="Painel — JOBOSAN", content=conteudo)
+    return render_template_string(LAYOUT_GERAL, title="Painel / Feed — JOBOSAN", content=conteudo)
 
 @app.route("/cadastro", methods=["GET", "POST"])
 def cadastro():
@@ -292,3 +349,4 @@ if __name__ == "__main__":
         port=int(os.environ.get("PORT", 5000)),
         debug=False
     )
+ 
