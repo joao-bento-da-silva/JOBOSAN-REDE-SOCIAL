@@ -1,5 +1,5 @@
-import os
-import sqlite3 
+ import os
+import sqlite3
 import secrets
 from datetime import timedelta
 from functools import wraps
@@ -19,11 +19,10 @@ app = Flask(__name__)
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
 app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
 
-# Configuração de Uploads de Mídia
 UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), "uploads")
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp", "mp4", "webm", "mov"}
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # Limite de 50MB por arquivo
+app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
