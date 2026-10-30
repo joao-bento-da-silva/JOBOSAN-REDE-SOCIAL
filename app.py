@@ -1,10 +1,20 @@
 import os
+import psycopg2
+import psycopg2.extras
+import sqlite3
 from flask import Blueprint, render_template_string, request, redirect, url_for, session
 
 rede_social_bp = Blueprint('rede_social', __name__)
 
-# Importa a função de banco do arquivo principal
-from __main__ import get_db
+def get_db():
+    database_url = os.environ.get("DATABASE_URL")
+    if database_url:
+        conn = psycopg2.connect(database_url, cursor_factory=psycopg2.extras.DictCursor)
+        return conn, "postgres"
+    else:
+        conn = sqlite3.connect("database.db")
+        conn.row_factory = sqlite3.Row
+        return conn, "sqlite"
 
 # Tenta carregar a IA do Gemini se disponível
 TEM_GEMINI = False
@@ -17,7 +27,6 @@ try:
 except Exception:
     pass
 
-# Layout específico e limpo para a rede social profissional
 LAYOUT_REDE = """
 <!DOCTYPE html>
 <html lang="pt">
@@ -31,8 +40,7 @@ LAYOUT_REDE = """
         .container { max-width: 650px; margin: 0 auto; }
         .bloco { background: var(--card-bg); padding: 20px; border-radius: 14px; margin-bottom: 20px; border: 1px solid rgba(16, 185, 129, 0.2); backdrop-filter: blur(10px); }
         textarea, input[type="text"] { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); background: rgba(0,0,0,0.3); color: white; box-sizing: border-box; margin-top: 5px; }
-        button { background: var(--primary); color: white; border: none; padding: 10px 20px; border-radius: 8px; font-weight: bold; cursor: pointer; transition: opacity 0.2s; }
-        button:hover { opacity: 0.9; }
+        button { background: var(--primary); color: white; border: none; padding: 10px 20px; border-radius: 8px; font-weight: bold; cursor: pointer; }
         .post { background: rgba(17, 24, 39, 0.7); padding: 15px; border-radius: 10px; margin-top: 15px; border: 1px solid rgba(255,255,255,0.05); }
         .header-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
         .btn-sair { background: #ef4444; font-size: 12px; padding: 6px 12px; text-decoration: none; border-radius: 6px; color: white; }
@@ -59,7 +67,6 @@ def plataforma():
     c = conn.cursor()
     ph = "%s" if db_type == "postgres" else "?"
 
-    # Garante que as tabelas essenciais existem
     if db_type == "postgres":
         c.execute("""
             CREATE TABLE IF NOT EXISTS posts (
@@ -82,7 +89,6 @@ def plataforma():
         """)
     conn.commit()
 
-    # Processa nova postagem ou interação com a IA
     if request.method == "POST":
         acao = request.form.get("acao")
         
@@ -113,22 +119,20 @@ def plataforma():
         
         return redirect(url_for("rede_social.plataforma"))
 
-    # Busca postagens
     c.execute("SELECT p.*, u.nome FROM posts p JOIN usuarios u ON p.usuario_id = u.id ORDER BY p.id DESC LIMIT 20")
     posts = c.fetchall()
     
     resposta_ia_atual = session.pop("ultima_resposta_ia", None)
     conn.close()
 
-    # Monta o HTML da interface da rede social
     conteudo = '''
     <div class="bloco">
         <h3>Criar Publicação</h3>
         <form method="POST">
             <input type="hidden" name="acao" value="postar">
             <textarea name="texto" rows="3" placeholder="O que você deseja compartilhar profissionalmente hoje?" required></textarea>
-            <input type="text" name="midia_url" placeholder="Link de imagem ou vídeo (opcional) [ex: https://...]" style="margin-top: 10px;">
-            <button type="submit" style="margin-top: 10px;">Publicar</time>
+            <input type="text" name="midia_url" placeholder="Link de imagem ou vídeo (opcional)" style="margin-top: 10px;">
+            <button type="submit" style="margin-top: 10px;">Publicar</button>
         </form>
     </div>
     '''
@@ -139,7 +143,7 @@ def plataforma():
             <h3>🤖 Assistente IA Jobosan</h3>
             <form method="POST">
                 <input type="hidden" name="acao" value="perguntar_ia">
-                <input type="text" name="pergunta_ia" placeholder=" Tire uma dúvida ou peça ajuda para criar um texto..." required>
+                <input type="text" name="pergunta_ia" placeholder=" Tire uma dúvida ou peça ajuda..." required>
                 <button type="submit" style="margin-top: 10px; background: #3b82f6;">Perguntar à IA</button>
             </form>
         '''
@@ -174,12 +178,8 @@ def plataforma():
     conteudo += '</div>'
 
     return render_template_string(LAYOUT_REDE, conteudo=conteudo)
-@app.route("/sair")
-def sair():
-    session.clear()
-    return redirect(url_for("entrar"))
-    
-
-if __name__ == "__main__":
+    if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
+
+ 
