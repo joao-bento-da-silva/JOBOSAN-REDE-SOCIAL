@@ -1,435 +1,793 @@
 import os
 import sqlite3
-import secrets
-from datetime import timedelta
-from functools import wraps
-from datetime import datetime, timezone
-from werkzeug.utils import secure_filename
-from flask import Flask, Response, send_from_directory
-from flask import (
-    Flask, render_template_string, request, redirect,
-    url_for, session, flash, jsonify
-)
-from werkzeug.security import (
-    generate_password_hash, check_password_hash
-)
+import random
+import uuid
+from datetime import datetime
+from flask import Flask, render_template_string, request, redirect, url_for, flash, session
+
+# -------------------------------------------------------------------
+# CONFIGURAÇÕES E CONSTANTES GLOBAIS
+# -------------------------------------------------------------------
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+
+NOME_APLICACAO = "Rede Jobosan"
+EMAIL_DONO = "dono@jobosan.com"
+SENHA_MESTRA_ACESSO = "1234"
 
 app = Flask(__name__)
+app.secret_key = os.getenv("SECRET_KEY", "chave_secreta_jobosan_rede_social")
 
-app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
-app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
+# Suporte ao PostgreSQL para hospedagem no Render
+try:
+    import psycopg2
+    import psycopg2.extras
+    POSTGRES_AVAILABLE = True
+except ImportError:
+    POSTGRES_AVAILABLE = False
 
-UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), "uploads")
-ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp", "mp4", "webm", "mov"}
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+# -------------------------------------------------------------------
+# FUNÇÕES AUXILIARES
+# -------------------------------------------------------------------
+def usuario_logado():
+    return 'usuario_id' in session
 
-DATABASE_PATH = os.environ.get(
-    "DATABASE_PATH",
-    os.path.join(os.path.dirname(__file__), "jobosan_jogos.db")
-)
+def eh_dono():
+    return session.get('usuario_email', '').strip().lower() == EMAIL_DONO.lower()
 
-def arquivo_permitido(filename):
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+def responder_ia(pergunta):
+    pergunta_clean = pergunta.lower().strip()
+    conn, db_type = get_db()
+    c = conn.cursor()
+    param = "%s" if db_type == "postgres" else "?"
+    c.execute(f"SELECT resposta_customizada FROM regras_ia WHERE pergunta_chave = {param}", (pergunta_clean,))
+    res = c.fetchone()
+    conn.close()
+    if res:
+        return res['resposta_customizada'] if isinstance(res, dict) or hasattr(res, 'keys') else res[0]
+    return f"Não encontrei uma resposta específica para '{pergunta}', mas continuo aprendendo!"
 
-@app.route('/uploads/<filename>')
-def serve_upload(filename):
-    return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
+# -------------------------------------------------------------------
+# BANCO DE DADOS
+# -------------------------------------------------------------------
+def get_db():
+    if DATABASE_URL and POSTGRES_AVAILABLE:
+        try:
+            url = DATABASE_URL
+            if url.startswith("postgres://"):
+                url = url.replace("postgres://", "postgresql://", 1)
+            conn = psycopg2.connect(url, cursor_factory=psycopg2.extras.DictCursor)
+            return conn, "postgres"
+        except Exception as e:
+            print(f"Erro ao conectar ao PostgreSQL: {e}")
 
-@app.route('/google510f4f340be76af9.html')
-def google_verification():
-    return "google-site-verification: google510f4f340be76af9.html"
-
-@app.route('/robots.txt')
-def robots():
-    content = """User-agent: *
-Allow: /
-Sitemap: https://jobosan.onrender.com/sitemap.xml
-"""
-    return Response(content, mimetype='text/plain')
-
-@app.route('/sitemap.xml')
-def sitemap():
-    xml_content = """<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url>
-    <loc>https://jobosan.onrender.com/</loc>
-    <priority>1.0</priority>
-  </url>
-</urlset>
-"""
-    return Response(xml_content, mimetype='application/xml')
-
-def agora():
-    return datetime.now(timezone.utc).isoformat()
-
-def conectar():
-    conn = sqlite3.connect(DATABASE_PATH, timeout=30)
+    db_path = os.path.join(BASE_DIR, "jobosan_rede_social.db")
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    return conn
+    return conn, "sqlite"
 
-def inicializar_banco():
-    pasta = os.path.dirname(DATABASE_PATH)
-    if pasta:
-        os.makedirs(pasta, exist_ok=True)
-    with conectar() as conn:
-        conn.execute("""
+def init_db():
+    conn, db_type = get_db()
+    c = conn.cursor()
+    
+    if db_type == "postgres":
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS usuarios (
+                id SERIAL PRIMARY KEY,
+                nome TEXT NOT NULL,
+                email TEXT UNIQUE NOT NULL,
+                senha TEXT NOT NULL,
+                pontos INTEGER DEFAULT 0,
+                pontos_bentinho INTEGER DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS postagens (
+                id SERIAL PRIMARY KEY,
+                usuario_id INTEGER,
+                texto TEXT,
+                arquivo TEXT,
+                data_postagem TEXT
+            );
+            CREATE TABLE IF NOT EXISTS curtidas (
+                usuario_id INTEGER,
+                postagem_id INTEGER,
+                PRIMARY KEY (usuario_id, postagem_id)
+            );
+            CREATE TABLE IF NOT EXISTS conversas_ia (
+                id SERIAL PRIMARY KEY,
+                usuario_id INTEGER,
+                pergunta TEXT,
+                resposta TEXT,
+                data_hora TEXT
+            );
+            CREATE TABLE IF NOT EXISTS regras_ia (
+                pergunta_chave TEXT PRIMARY KEY,
+                resposta_customizada TEXT
+            );
+        """)
+    else:
+        c.execute("""
             CREATE TABLE IF NOT EXISTS usuarios (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 nome TEXT NOT NULL,
-                email TEXT NOT NULL UNIQUE,
-                senha_hash TEXT NOT NULL,
-                criado_em TEXT NOT NULL
-            )
+                email TEXT UNIQUE NOT NULL,
+                senha TEXT NOT NULL,
+                pontos INTEGER DEFAULT 0,
+                pontos_bentinho INTEGER DEFAULT 0
+            );
         """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS progresso (
-                usuario_id INTEGER PRIMARY KEY,
-                pontos INTEGER NOT NULL DEFAULT 0,
-                fases_concluidas INTEGER NOT NULL DEFAULT 0,
-                partidas INTEGER NOT NULL DEFAULT 0,
-                atualizado_em TEXT NOT NULL,
-                FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS posts (
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS postagens (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                usuario_id INTEGER NOT NULL,
-                conteudo TEXT NOT NULL,
-                midia_url TEXT,
-                criado_em TEXT NOT NULL,
-                FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
-            )
+                usuario_id INTEGER,
+                texto TEXT,
+                arquivo TEXT,
+                data_postagem TEXT
+            );
         """)
-        conn.execute("""
+        c.execute("""
             CREATE TABLE IF NOT EXISTS curtidas (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                post_id INTEGER NOT NULL,
-                usuario_id INTEGER NOT NULL,
-                criado_em TEXT NOT NULL,
-                UNIQUE(post_id, usuario_id),
-                FOREIGN KEY(post_id) REFERENCES posts(id),
-                FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
-            )
+                usuario_id INTEGER,
+                postagem_id INTEGER,
+                PRIMARY KEY (usuario_id, postagem_id)
+            );
         """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS conversas_ia (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                usuario_id INTEGER,
+                pergunta TEXT,
+                resposta TEXT,
+                data_hora TEXT
+            );
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS regras_ia (
+                pergunta_chave TEXT PRIMARY KEY,
+                resposta_customizada TEXT
+            );
+        """)
+    
+    conn.commit()
+    conn.close()
 
-inicializar_banco()
+init_db()
 
-def login_obrigatorio(fn):
-    @wraps(fn)
-    def wrapper(*args, **kwargs):
-        if not session.get("usuario_id"):
-            return redirect(url_for("entrar"))
-        return fn(*args, **kwargs)
-    return wrapper
+# -------------------------------------------------------------------
+# ROTAS PRINCIPAIS, LOGIN E CADASTRO
+# -------------------------------------------------------------------
+@app.route('/')
+def index():
+    if usuario_logado():
+        return redirect(url_for('plataforma'))
+    return redirect(url_for('login'))
 
-LAYOUT_GERAL = """
-<!DOCTYPE html>
-<html lang="pt-BR">
+@app.route('/cadastro', methods=['GET', 'POST'])
+def cadastro():
+    if request.method == 'POST':
+        nome = request.form.get('nome')
+        email = request.form.get('email')
+        senha = request.form.get('senha')
+        
+        conn, db_type = get_db()
+        c = conn.cursor()
+        param = "%s" if db_type == "postgres" else "?"
+        
+        c.execute(f"SELECT * FROM usuarios WHERE email = {param}", (email,))
+        if c.fetchone():
+            conn.close()
+            flash("E-mail já cadastrado!", "danger")
+            return redirect(url_for('cadastro'))
+            
+        c.execute(
+            f"INSERT INTO usuarios (nome, email, senha, pontos, pontos_bentinho) VALUES ({param}, {param}, {param}, 0, 0)",
+            (nome, email, senha)
+        )
+        conn.commit()
+        conn.close()
+        
+        flash("Cadastro realizado com sucesso! Faça login.", "success")
+        return redirect(url_for('login'))
+        
+    return render_template_string('''<!DOCTYPE html>
+<html lang="pt-br">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="JOBOSAN - Rede Social e Plataforma Digital criada por João Bento da Silva.">
-    <meta name="author" content="João Bento da Silva">
-    <title>{{ title }}</title>
-    <style>
-        body { font-family: Arial, sans-serif; background: #121212; color: #f0f0f0; margin: 0; padding: 0; display: flex; flex-direction: column; min-height: 100vh; }
-        header { background: #1f1f1f; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #333; }
-        header h1 { margin: 0; font-size: 1.5rem; color: #ffcc00; }
-        nav a, nav button { color: #fff; background: #333; border: none; padding: 8px 15px; margin-left: 10px; border-radius: 4px; text-decoration: none; cursor: pointer; }
-        nav a:hover, nav button:hover { background: #555; }
-        .container { flex: 1; max-width: 950px; margin: 20px auto; padding: 20px; background: #1e1e1e; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); width: 92%; }
-        footer { text-align: center; padding: 15px; background: #1a1a1a; color: #888; font-size: 0.85rem; border-top: 1px solid #333; }
-        .flashes { margin-bottom: 15px; }
-        .flash { padding: 10px; border-radius: 4px; margin-bottom: 5px; font-size: 0.9rem; }
-        .flash.erro { background: #800000; color: #fff; }
-        .flash.sucesso { background: #006600; color: #fff; }
-        .auth-container { max-width: 400px; margin: 40px auto; }
-        .campo { margin-bottom: 15px; }
-        .campo label { display: block; margin-bottom: 5px; color: #ccc; }
-        .campo input, .campo textarea { width: 100%; padding: 10px; background: #2a2a2a; border: 1px solid #444; color: #fff; border-radius: 4px; box-sizing: border-box; }
-        .btn-submit { background: #0275d8; color: white; border: none; padding: 10px; width: 100%; border-radius: 4px; font-weight: bold; cursor: pointer; }
-        .btn-submit:hover { background: #025aa5; }
-        .auth-footer { text-align: center; margin-top: 15px; font-size: 0.9rem; }
-        .auth-footer a { color: #5bc0de; text-decoration: none; }
-        .post-card { background: #252525; padding: 15px; border-radius: 6px; margin-bottom: 15px; border-left: 4px solid #ffcc00; }
-        .post-autor { font-weight: bold; color: #ffcc00; margin-bottom: 5px; }
-        .post-data { font-size: 0.75rem; color: #888; margin-bottom: 10px; }
-        .post-midia { margin-top: 10px; max-width: 100%; border-radius: 6px; overflow: hidden; }
-        .post-midia img, .post-midia video { max-width: 100%; max-height: 400px; display: block; border-radius: 4px; }
-        .btn-curtir { display: inline-flex; align-items: center; gap: 5px; background: #333; color: #ffcc00; padding: 6px 12px; border-radius: 4px; text-decoration: none; font-size: 0.9rem; margin-top: 10px; border: 1px solid #444; }
-        .btn-curtir:hover { background: #444; }
-        .btn-curtir.curtiu { background: #ffcc00; color: #111; font-weight: bold; }
-    </style>
+    <title>Cadastro — {{ nome_app }}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body>
-    <header>
-        <h1>🌐 JOBOSAN</h1>
-        <nav>
-            {% if session.get('usuario_id') %}
-                <span>Olá, <strong>{{ session.get('usuario_nome') }}</strong></span>
-                <a href="{{ url_for('painel') }}">Painel / Feed</a>
-                <form action="{{ url_for('sair') }}" method="POST" style="display:inline;">
-                    <button type="submit">Sair</button>
-                </form>
-            {% else %}
-                <a href="{{ url_for('entrar') }}">Entrar</a>
-                <a href="{{ url_for('cadastro') }}">Criar Conta</a>
-            {% endif %}
-        </nav>
-    </header>
-
-    <main class="container">
+<body class="bg-gray-900 text-gray-100 min-h-screen flex items-center justify-center p-4">
+    <div class="bg-gray-800 p-8 rounded-xl border border-yellow-500/30 max-w-md w-full">
+        <h2 class="text-2xl font-bold text-yellow-500 text-center mb-6">📝 Criar Conta</h2>
+        
         {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                <div class="flashes">
-                    {% for cat, msg in messages %}
-                        <div class="flash {{ cat }}">{{ msg }}</div>
-                    {% endfor %}
-                </div>
-            {% endif %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="mb-4 p-3 rounded-lg text-sm font-bold text-center {% if category == 'danger' %}bg-red-900/50 text-red-400{% else %}bg-green-900/50 text-green-400{% endif %}">
+                {{ message }}
+              </div>
+            {% endfor %}
+          {% endif %}
         {% endwith %}
 
-        {{ content | safe }}
-    </main>
-
-    <footer>
-        <p>&copy; 2026 JOBOSAN — Criado e Desenvolvido por <strong>João Bento da Silva</strong>. Todos os direitos reservados.</p>
-    </footer>
+        <form method="POST" class="space-y-4">
+            <div>
+                <label class="block text-sm text-gray-400 mb-1">Nome</label>
+                <input type="text" name="nome" required class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white">
+            </div>
+            <div>
+                <label class="block text-sm text-gray-400 mb-1">E-mail</label>
+                <input type="email" name="email" required class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white">
+            </div>
+            <div>
+                <label class="block text-sm text-gray-400 mb-1">Senha</label>
+                <input type="password" name="senha" required class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white">
+            </div>
+            <button type="submit" class="w-full bg-yellow-600 hover:bg-yellow-500 text-black font-bold py-3 rounded-lg transition">Cadastrar</button>
+        </form>
+        <p class="text-center text-sm text-gray-400 mt-4">Já tem uma conta? <a href="/login" class="text-yellow-500">Faça login</a></p>
+    </div>
 </body>
-</html>
-"""
+</html>''', nome_app=NOME_APLICACAO)
 
-REGISTRO_HTML = """
-<div class="auth-container">
-    <h2>Criar Conta</h2>
-    <form method="POST">
-        <div class="campo">
-            <label for="nome">Nome</label>
-            <input type="text" id="nome" name="nome" required>
-        </div>
-        <div class="campo">
-            <label for="email">E-mail</label>
-            <input type="email" id="email" name="email" required>
-        </div>
-        <div class="campo">
-            <label for="senha">Senha (mínimo 6 dígitos)</label>
-            <input type="password" id="senha" name="senha" required>
-        </div>
-        <button type="submit" class="btn-submit">Cadastrar</button>
-    </form>
-    <div class="auth-footer">
-        <p>Já tem uma conta? <a href="{{ url_for('entrar') }}">Entrar</a></p>
-    </div>
-</div>
-"""
-
-LOGIN_HTML = """
-<div class="auth-container">
-    <h2>Entrar</h2>
-    <form method="POST">
-        <div class="campo">
-            <label for="email">E-mail</label>
-            <input type="email" id="email" name="email" required>
-        </div>
-        <div class="campo">
-            <label for="senha">Senha</label>
-            <input type="password" id="senha" name="senha" required>
-        </div>
-        <button type="submit" class="btn-submit">Entrar</button>
-    </form>
-    <div class="auth-footer">
-        <p>Não tem uma conta? <a href="{{ url_for('cadastro') }}">Criar Conta</a></p>
-    </div>
-</div>
-"""
-
-@app.route("/")
-def index():
-    if session.get("usuario_id"):
-        return redirect(url_for("painel"))
-    conteudo = """
-    <div style="text-align: center; padding: 30px;">
-        <h2>🌐 Bem-vindo à Rede Social JOBOSAN</h2>
-        <p style="font-style: italic; color: #ffcc00; margin: 15px 0;">"Conectando ideias e pessoas."</p>
-        <div style="margin-top: 25px;">
-            <a href=""" + url_for('cadastro') + """ style="background: #5cb85c; color: #fff; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold; margin-right: 10px;">Criar Conta</a>
-            <a href=""" + url_for('entrar') + """ style="background: #0275d8; color: #fff; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold;">Entrar</a>
-        </div>
-    </div>
-    """
-    return render_template_string(LAYOUT_GERAL, title="JOBOSAN", content=conteudo)
-
-@app.route("/entrar", methods=["GET", "POST"])
-def entrar():
-    if request.method == "POST":
-        email = request.form.get("email", "").strip().lower()
-        senha = request.form.get("senha", "")
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        email = request.form.get('email')
+        senha = request.form.get('senha')
         
-        with conectar() as conn:
-            user = conn.execute("SELECT * FROM usuarios WHERE email = ?", (email,)).fetchone()
-            
-        if user and check_password_hash(user["senha_hash"], senha):
-            session.permanent = True
-            session["usuario_id"] = user["id"]
-            session["usuario_nome"] = user["nome"]
-            return redirect(url_for("painel"))
+        conn, db_type = get_db()
+        c = conn.cursor()
+        param = "%s" if db_type == "postgres" else "?"
+        
+        c.execute(f"SELECT * FROM usuarios WHERE email = {param} AND senha = {param}", (email, senha))
+        usuario = c.fetchone()
+        conn.close()
+        
+        if usuario:
+            session['usuario_id'] = usuario['id']
+            session['usuario_nome'] = usuario['nome']
+            session['usuario_email'] = usuario['email']
+            return redirect(url_for('plataforma'))
         else:
-            flash("E-mail ou senha incorretos.", "erro")
+            flash("E-mail ou senha incorretos.", "danger")
+            return redirect(url_for('login'))
             
-    return render_template_string(LAYOUT_GERAL, title="Entrar — JOBOSAN", content=LOGIN_HTML)
+    return render_template_string('''<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Login — {{ nome_app }}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen flex items-center justify-center p-4">
+    <div class="bg-gray-800 p-8 rounded-xl border border-yellow-500/30 max-w-md w-full">
+        <h2 class="text-2xl font-bold text-yellow-500 text-center mb-6">🔑 Entrar na Plataforma</h2>
+        
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="mb-4 p-3 rounded-lg text-sm font-bold text-center {% if category == 'danger' %}bg-red-900/50 text-red-400{% else %}bg-green-900/50 text-green-400{% endif %}">
+                {{ message }}
+              </div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
 
-@app.route("/sair", methods=["POST"])
+        <form method="POST" class="space-y-4">
+            <div>
+                <label class="block text-sm text-gray-400 mb-1">E-mail</label>
+                <input type="email" name="email" required class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white">
+            </div>
+            <div>
+                <label class="block text-sm text-gray-400 mb-1">Senha</label>
+                <input type="password" name="senha" required class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white">
+            </div>
+            <button type="submit" class="w-full bg-yellow-600 hover:bg-yellow-500 text-black font-bold py-3 rounded-lg transition">Entrar</button>
+        </form>
+        <p class="text-center text-sm text-gray-400 mt-4">Não tem uma conta? <a href="/cadastro" class="text-yellow-500">Cadastre-se</a></p>
+    </div>
+</body>
+</html>''', nome_app=NOME_APLICACAO)
+
+@app.route("/sair")
 def sair():
     session.clear()
-    return redirect(url_for("index"))
+    return redirect(url_for("login"))
 
-@app.route("/curtir/<int:post_id>", methods=["POST"])
-@login_obrigatorio
-def curtir(post_id):
-    uid = session["usuario_id"]
-    with conectar() as conn:
-        ja_curtiu = conn.execute(
-            "SELECT id FROM curtidas WHERE post_id = ? AND usuario_id = ?",
-            (post_id, uid)
-        ).fetchone()
-        
-        if ja_curtiu:
-            conn.execute("DELETE FROM curtidas WHERE id = ?", (ja_curtiu["id"],))
-        else:
-            conn.execute(
-                "INSERT INTO curtidas (post_id, usuario_id, criado_em) VALUES (?, ?, ?)",
-                (post_id, uid, agora())
-            )
-    return redirect(url_for("painel"))
+# -------------------------------------------------------------------
+# PLATAFORMA FEED E INTERAÇÕES
+# -------------------------------------------------------------------
+@app.route("/plataforma", methods=["GET", "POST"])
+def plataforma():
+    if not usuario_logado():
+        return redirect(url_for("login"))
+    usuario_id = session["usuario_id"]
+    
+    try:
+        pagina = int(request.args.get("pagina", 1))
+        if pagina < 1: pagina = 1
+    except ValueError:
+        pagina = 1
 
-@app.route("/painel", methods=["GET", "POST"])
-@login_obrigatorio
-def painel():
+    itens_por_pagina = 20
+    offset = (pagina - 1) * itens_por_pagina
+
+    # Criar Postagem
     if request.method == "POST":
-        conteudo_post = request.form.get("conteudo", "").strip()
-        midia = request.files.get("midia")
-        midia_url = None
+        texto = request.form.get("texto_post", "").strip()
 
-        if midia and midia.filename != "" and arquivo_permitido(midia.filename):
-            ext = midia.filename.rsplit(".", 1)[1].lower()
-            nome_arquivo = f"{secrets.token_hex(16)}.{ext}"
-            midia.save(os.path.join(app.config["UPLOAD_FOLDER"], nome_arquivo))
-            midia_url = url_for("serve_upload", filename=nome_arquivo)
-
-        if len(conteudo_post) > 0 or midia_url:
-            with conectar() as conn:
-                conn.execute(
-                    "INSERT INTO posts (usuario_id, conteudo, midia_url, criado_em) VALUES (?, ?, ?, ?)",
-                    (session["usuario_id"], conteudo_post, midia_url, agora())
+        if texto:
+            conn, db_type = get_db()
+            try:
+                c = conn.cursor()
+                param = "%s" if db_type == "postgres" else "?"
+                c.execute(
+                    f"INSERT INTO postagens (usuario_id, texto, arquivo, data_postagem) VALUES ({param}, {param}, NULL, {param})",
+                    (usuario_id, texto, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
                 )
-            flash("Postagem realizada com sucesso!", "sucesso")
-        else:
-            flash("A postagem precisa ter texto ou uma mídia associada.", "erro")
-        return redirect(url_for("painel"))
+                conn.commit()
+            finally:
+                conn.close()
+            return redirect(url_for("plataforma"))
 
-    with conectar() as conn:
-        posts = conn.execute("""
-            SELECT posts.*, usuarios.nome as autor_nome,
-                   (SELECT COUNT(*) FROM curtidas WHERE curtidas.post_id = posts.id) as total_curtidas,
-                   (SELECT COUNT(*) FROM curtidas WHERE curtidas.post_id = posts.id AND curtidas.usuario_id = ?) as usuario_curtiu
-            FROM posts 
-            JOIN usuarios ON posts.usuario_id = usuarios.id 
-            ORDER BY posts.id DESC
-        """, (session["usuario_id"],)).fetchall()
-
-    lista_posts_html = ""
-    for p in posts:
-        html_midia = ""
-        if p["midia_url"]:
-            url_m = p["midia_url"]
-            ext = url_m.rsplit(".", 1)[1].lower() if "." in url_m else ""
-            if ext in ["mp4", "webm", "mov"]:
-                html_midia = f'<div class="post-midia"><video src="{url_m}" controls></video></div>'
-            else:
-                html_midia = f'<div class="post-midia"><img src="{url_m}" alt="Mídia do Post"></div>'
-
-        classe_curtiu = "curtiu" if p["usuario_curtiu"] > 0 else ""
-        texto_curtir = "❤️ Curtido" if p["usuario_curtiu"] > 0 else "🤍 Curtir"
-
-        lista_posts_html += f"""
-        <div class="post-card">
-            <div class="post-autor">👤 {p['autor_nome']}</div>
-            <div class="post-data">🕒 {p['criado_em'][:19].replace('T', ' ')}</div>
-            <div>{p['conteudo']}</div>
-            {html_midia}
-            <form action="{url_for('curtir', post_id=p['id'])}" method="POST" style="margin: 0;">
-                <button type="submit" class="btn-curtir {classe_curtiu}">
-                    {texto_curtir} ({p['total_curtidas']})
-                </button>
-            </form>
-        </div>
-        """
-
-    if not lista_posts_html:
-        lista_posts_html = "<p style='color: #888; text-align: center;'>Ainda não há postagens. Seja o primeiro a publicar algo!</p>"
-
-    conteudo = f"""
-    <div>
-        <h2>Feed da Rede Social — JOBOSAN</h2>
+    # Curtidas
+    if "curtir" in request.args:
+        pid = request.args.get("curtir")
+        conn, db_type = get_db()
+        c = conn.cursor()
+        param = "%s" if db_type == "postgres" else "?"
+        try:
+            c.execute(f"INSERT INTO curtidas (usuario_id, postagem_id) VALUES ({param}, {param})", (usuario_id, pid))
+        except (sqlite3.IntegrityError, Exception):
+            c.execute(f"DELETE FROM curtidas WHERE usuario_id = {param} AND postagem_id = {param}", (usuario_id, pid))
+        conn.commit()
+        conn.close()
+        return redirect(url_for("plataforma", pagina=pagina) + "#post-" + str(pid))
+    
+    # Dados do usuário
+    conn, db_type = get_db()
+    c = conn.cursor()
+    param = "%s" if db_type == "postgres" else "?"
+    c.execute(f"SELECT nome, pontos, email FROM usuarios WHERE id = {param}", (usuario_id,))
+    usuario_dados = c.fetchone()
+    if not usuario_dados:
+        conn.close()
+        session.clear()
+        return redirect(url_for("login"))
         
-        <div style="background: #252525; padding: 20px; border-radius: 6px; margin-bottom: 25px;">
-            <h3 style="margin-top: 0; color: #ffcc00;">O que você está pensando?</h3>
-            <form method="POST" enctype="multipart/form-data">
-                <div class="campo">
-                    <textarea name="conteudo" rows="3" placeholder="Escreva sua postagem aqui..."></textarea>
-                </div>
-                <div class="campo">
-                    <label for="midia">Anexar Foto ou Vídeo:</label>
-                    <input type="file" id="midia" name="midia" accept="image/*,video/*">
-                </div>
-                <button type="submit" class="btn-submit" style="width: auto; padding: 8px 20px;">Publicar</button>
-            </form>
+    nome_usuario = usuario_dados['nome']
+    total_pontos = usuario_dados['pontos']
+    email_usuario = usuario_dados['email']
+    
+    # Paginação
+    c.execute("SELECT COUNT(*) FROM postagens")
+    total_posts_banco = c.fetchone()[0]
+    total_paginas = (total_posts_banco + itens_por_pagina - 1) // itens_por_pagina or 1
+
+    # Buscar Postagens
+    query = f"""
+        SELECT p.id, p.texto, p.arquivo, p.data_postagem, u.nome,
+        (SELECT COUNT(*) FROM curtidas c WHERE c.postagem_id = p.id) as total_curtidas,
+        EXISTS(SELECT 1 FROM curtidas c WHERE c.postagem_id = p.id AND c.usuario_id = {param}) as curtiu
+        FROM postagens p JOIN usuarios u ON p.usuario_id = u.id 
+        ORDER BY p.data_postagem DESC LIMIT {param} OFFSET {param}
+    """
+    c.execute(query, (usuario_id, itens_por_pagina, offset))
+    postagens = c.fetchall()
+    conn.close()
+    
+    posts_html = ""
+    for p in postagens:
+        pid, texto, data, autor, curtidas, curtiu = p['id'], p['texto'], p['data_postagem'], p['nome'], p['total_curtidas'], p['curtiu']
+        posts_html += f'''<div id="post-{pid}" class="bg-gray-800 p-4 rounded-lg border border-yellow-500/30 mb-4">
+            <h4 class="font-bold text-yellow-400">{autor}</h4><p class="text-sm text-gray-400">{data}</p>
+            {f'<p class="my-3 whitespace-pre-wrap">{texto}</p>' if texto else ''}
+            <div class="mt-3 pt-3 border-t border-gray-700">
+                <a href="/plataforma?curtir={pid}&pagina={pagina}#post-{pid}" class="text-{'red' if curtiu else 'gray'}-400 font-bold">👍 {curtidas} Curtida{'s' if curtidas != 1 else ''}</a>
+            </div>
+        </div>'''
+    
+    if not posts_html:
+        posts_html = '<p class="text-center text-gray-500 py-10">Ainda não há postagens. Seja o primeiro a publicar!</p>'
+    
+    btn_anterior = f'<a href="/plataforma?pagina={pagina - 1}" class="bg-gray-700 hover:bg-gray-600 text-yellow-400 font-bold px-4 py-2 rounded-lg">← Anterior</a>' if pagina > 1 else '<span class="text-gray-600 bg-gray-800 px-4 py-2 rounded-lg cursor-not-allowed">← Anterior</span>'
+    btn_proxima = f'<a href="/plataforma?pagina={pagina + 1}" class="bg-gray-700 hover:bg-gray-600 text-yellow-400 font-bold px-4 py-2 rounded-lg">Próxima →</a>' if pagina < total_paginas else '<span class="text-gray-600 bg-gray-800 px-4 py-2 rounded-lg cursor-not-allowed">Próxima →</span>'
+
+    paginacao_html = f'''<div class="flex justify-between items-center bg-gray-800 p-4 rounded-lg border border-yellow-500/30 my-6">
+        {btn_anterior}
+        <span class="text-gray-300 font-bold text-sm">Página {pagina} de {total_paginas}</span>
+        {btn_proxima}
+    </div>'''
+
+    botao_admin = f'<a href="/area_privada" class="bg-red-600 text-white px-4 py-2 rounded-lg text-sm ml-2 font-bold">🔒 Área Privada</a>' if email_usuario.strip().lower() == EMAIL_DONO.lower() else ""
+    
+    return render_template_string(f'''<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Plataforma — {NOME_APLICACAO}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>.tab-content{{display:block;}}.tab-content.hidden{{display:none !important;}}</style>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen">
+    <div class="container mx-auto px-4 py-6 max-w-4xl">
+        <div class="flex flex-wrap justify-between items-center border-b border-gray-700 pb-4 mb-6">
+            <div><h1 class="text-2xl font-bold text-yellow-500">⚡ {NOME_APLICACAO}</h1><p class="text-gray-400">Bem-vindo, {nome_usuario}!</p></div>
+            <div class="text-right">
+                <p class="text-sm text-gray-400">Pontos</p><p class="text-xl font-bold text-yellow-500">{total_pontos}</p>
+                <a href="/sair" class="text-red-400 text-sm ml-2">Sair</a> {botao_admin}
+            </div>
+        </div>
+        <div class="flex flex-wrap gap-2 mb-6 border-b border-gray-700 pb-2">
+            <button class="tab-btn bg-yellow-600 text-black px-4 py-2 rounded-t-lg font-bold" onclick="switchTab('rede', event)">Rede Social</button>
+            <button class="tab-btn bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-t-lg" onclick="switchTab('jogos', event)">🎮 Jogos</button>
+            <button class="tab-btn bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-t-lg" onclick="switchTab('ia', event)">🤖 IA</button>
         </div>
 
-        <h3 style="color: #ffcc00; border-bottom: 2px solid #333; padding-bottom: 8px;">Publicações Recentes</h3>
-        <div style="margin-top: 15px;">
-            {lista_posts_html}
+        <div id="tab-rede" class="tab-content">
+            <form method="POST" class="bg-gray-800 p-5 rounded-lg border border-yellow-500/30 mb-6">
+                <h3 class="text-yellow-500 font-bold mb-3">✍️ Nova Postagem</h3>
+                <textarea name="texto_post" rows="3" placeholder="Escreva algo..." class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white mb-3" required></textarea>
+                <button type="submit" class="bg-yellow-600 text-black font-bold py-2 px-6 rounded-lg">📤 Publicar</button>
+            </form>
+            <h3 class="text-yellow-500 font-bold mb-3">📰 Postagens</h3>
+            {posts_html}
+            {paginacao_html}
+        </div>
+
+        <div id="tab-jogos" class="tab-content hidden">
+            <h3 class="text-yellow-500 font-bold mb-4">🎮 Área de Jogos</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <a href="/jogo_bentinho" class="bg-gray-800 p-5 rounded-lg border border-yellow-500/30 hover:border-yellow-400 transition">
+                    <h4 class="text-xl font-bold text-yellow-400">🎮 Segredo dos Números</h4>
+                    <p class="text-gray-400 mt-2">Decifre o número e ganhe pontos!</p>
+                </a>
+                <a href="/jogo_cartas" class="bg-gray-800 p-5 rounded-lg border border-yellow-500/30 hover:border-yellow-400 transition">
+                    <h4 class="text-xl font-bold text-yellow-400">🃏 Jogo das Cartas</h4>
+                    <p class="text-gray-400 mt-2">Converta as cartas corretamente!</p>
+                </a>
+            </div>
+        </div>
+
+        <div id="tab-ia" class="tab-content hidden">
+            <h3 class="text-yellow-500 font-bold mb-4">🤖 Inteligência Artificial</h3>
+            <form action="/responder_ia" method="POST" class="bg-gray-800 p-5 rounded-lg border border-yellow-500/30 mb-4">
+                <label class="block text-gray-300 mb-2">Pergunte à IA:</label>
+                <input type="text" name="pergunta" placeholder="Faça sua pergunta..." class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white mb-3" required>
+                <button type="submit" class="bg-yellow-600 text-black font-bold py-2 px-4 rounded-lg">Enviar</button>
+            </form>
+
+            <h4 class="text-yellow-400 font-bold mt-6 mb-3">📚 Ensinar a IA</h4>
+            <form action="/ensinar_ia" method="POST" class="bg-gray-800 p-5 rounded-lg border border-green-500/30">
+                <input type="text" name="pergunta_chave" placeholder="Palavra/Assunto" class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white mb-3" required>
+                <textarea name="resposta_customizada" rows="4" placeholder="Resposta que a IA deve dar..." class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white mb-3" required></textarea>
+                <button type="submit" class="bg-green-600 text-white font-bold py-2 px-4 rounded-lg">💾 Salvar na Memória</button>
+            </form>
         </div>
     </div>
-    """
-    return render_template_string(LAYOUT_GERAL, title="Painel / Feed — JOBOSAN", content=conteudo)
 
-@app.route("/cadastro", methods=["GET", "POST"])
-def cadastro():
+    <script>
+        function switchTab(nome, evt) {{
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.add('hidden'));
+            document.querySelectorAll('.tab-btn').forEach(b => {{
+                b.classList.remove('bg-yellow-600', 'text-black');
+                b.classList.add('bg-gray-700');
+            }});
+            document.getElementById('tab-' + nome).classList.remove('hidden');
+            evt.target.classList.remove('bg-gray-700');
+            evt.target.classList.add('bg-yellow-600', 'text-black');
+        }}
+    </script>
+</body>
+</html>''')
+
+# -------------------------------------------------------------------
+# ÁREA PRIVADA & PAINEL DO DONO
+# -------------------------------------------------------------------
+@app.route("/area_privada", methods=["GET", "POST"])
+def area_privada():
+    if not usuario_logado() or not eh_dono():
+        return '''<div style="text-align:center;padding:50px;background:#0f172a;color:white;font-family:sans-serif;">
+            <h2 style="color:red;">🚫 ACESSO NEGADO — Área exclusiva do dono</h2>
+            <br><a href="/plataforma" style="color:#f59e0b;">Voltar</a>
+        </div>'''
     if request.method == "POST":
-        nome = request.form.get("nome", "").strip()
-        email = request.form.get("email", "").strip().lower()
-        senha = request.form.get("senha", "")
-        
-        if len(nome) < 2 or "@" not in email or len(senha) < 6:
-            flash("Preencha os campos corretamente (senha mínima de 6 dígitos).", "erro")
-        else:
-            try:
-                with conectar() as conn:
-                    cur = conn.execute(
-                        "INSERT INTO usuarios (nome, email, senha_hash, criado_em) VALUES (?, ?, ?, ?)",
-                        (nome, email, generate_password_hash(senha), agora())
-                    )
-                    uid = cur.lastrowid
-                    conn.execute("INSERT INTO progresso (usuario_id, atualizado_em) VALUES (?, ?)", (uid, agora()))
+        if request.form.get("senha_mestra") == SENHA_MESTRA_ACESSO:
+            return redirect(url_for("painel_dono"))
+        return '''<div style="text-align:center;padding:50px;background:#0f172a;color:white;font-family:sans-serif;">
+            <h2 style="color:red;">❌ Senha incorreta!</h2>
+            <br><a href="/area_privada" style="color:#f59e0b;">Tentar novamente</a>
+        </div>'''
+    return render_template_string('''<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>🔒 Área Privada</title>
+    <style>body{background:linear-gradient(180deg,#0f172a,#1e293b);color:white;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:Arial,sans-serif;}
+    .caixa{background:rgba(15,23,42,0.9);padding:40px;border-radius:12px;border:2px solid #f59e0b;max-width:400px;width:90%;text-align:center;}
+    input{width:100%;padding:12px;margin:8px 0;background:#020617;border:1px solid #334155;color:white;border-radius:6px;box-sizing:border-box;}
+    button{width:100%;padding:12px;background:#f59e0b;color:black;border:none;border-radius:6px;font-weight:bold;cursor:pointer;}
+    a{color:#f59e0b;text-decoration:none;display:block;margin-top:20px;}</style>
+</head>
+<body>
+    <div class="caixa">
+        <h1 style="color:#f59e0b;">🔒 ÁREA PRIVADA</h1>
+        <p style="margin-bottom:20px;">Confirme a senha mestra para acessar</p>
+        <form method="POST">
+            <input type="password" name="senha_mestra" placeholder="Senha Mestra" required>
+            <button type="submit">🔓 Desbloquear</button>
+        </form>
+        <a href="/plataforma">← Voltar</a>
+    </div>
+</body>
+</html>''')
 
-                session.permanent = True
-                session["usuario_id"] = uid
-                session["usuario_nome"] = nome
+@app.route("/painel_dono")
+def painel_dono():
+    if not usuario_logado() or not eh_dono():
+        return redirect(url_for("login"))
+    conn, _ = get_db()
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM usuarios")
+    total_usuarios = c.fetchone()[0]
+    c.execute("SELECT COUNT(*) FROM postagens")
+    total_postagens = c.fetchone()[0]
+    conn.close()
+    return render_template_string(f'''<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>⚙️ Painel do Dono</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-gray-200 p-6 max-w-4xl mx-auto">
+    <h1 class="text-3xl font-bold text-yellow-500 mb-6">⚙️ PAINEL DO DONO</h1>
+    <a href="/plataforma" class="text-yellow-500 mb-4 inline-block font-bold">← Voltar</a>
+    <div class="grid grid-cols-2 gap-4">
+        <div class="bg-gray-800 p-4 rounded-lg border border-yellow-500/30">
+            <p class="text-gray-400">Total de Usuários</p>
+            <p class="text-2xl font-bold text-yellow-500">{total_usuarios}</p>
+        </div>
+        <div class="bg-gray-800 p-4 rounded-lg border border-yellow-500/30">
+            <p class="text-gray-400">Total de Postagens</p>
+            <p class="text-2xl font-bold text-yellow-500">{total_postagens}</p>
+        </div>
+    </div>
+</body>
+</html>''')
+
+# -------------------------------------------------------------------
+# IA E JOGOS
+# -------------------------------------------------------------------
+@app.route("/responder_ia", methods=["POST"])
+def responder_ia_rota():
+    if not usuario_logado():
+        return "Não autorizado", 401
+    pergunta = request.form.get("pergunta", "").strip()
+    if not pergunta:
+        return "Digite uma pergunta!"
+    resposta = responder_ia(pergunta)
+    data_hora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn, db_type = get_db()
+    c = conn.cursor()
+    param = "%s" if db_type == "postgres" else "?"
+    c.execute(f"INSERT INTO conversas_ia (usuario_id, pergunta, resposta, data_hora) VALUES ({param}, {param}, {param}, {param})",
+              (session["usuario_id"], pergunta, resposta, data_hora))
+    conn.commit()
+    conn.close()
+    return resposta
+
+@app.route("/ensinar_ia", methods=["POST"])
+def ensinar_ia():
+    if not usuario_logado():
+        return "Não autorizado", 401
+    pergunta_chave = request.form.get("pergunta_chave", "").strip().lower()
+    resposta_customizada = request.form.get("resposta_customizada", "").strip()
+    if pergunta_chave and resposta_customizada:
+        try:
+            conn, db_type = get_db()
+            c = conn.cursor()
+            
+            if db_type == "postgres":
+                c.execute("INSERT INTO regras_ia (pergunta_chave, resposta_customizada) VALUES (%s, %s) ON CONFLICT (pergunta_chave) DO UPDATE SET resposta_customizada = EXCLUDED.resposta_customizada", (pergunta_chave, resposta_customizada))
+            else:
+                c.execute("INSERT OR REPLACE INTO regras_ia (pergunta_chave, resposta_customizada) VALUES (?, ?)", (pergunta_chave, resposta_customizada))
                 
-                return redirect(url_for("painel"))
-            except sqlite3.IntegrityError:
-                flash("Este e-mail já está cadastrado.", "erro")
+            conn.commit()
+            conn.close()
+            return " IA ensinada com sucesso!"
+        except Exception as e:
+            return f"❌ Erro ao ensinar IA: {str(e)}"
+    return "Preencha todos os campos!", 400
 
-    return render_template_string(LAYOUT_GERAL, title="Criar Conta — JOBOSAN", content=REGISTRO_HTML)
+@app.route("/jogo_cartas", methods=["GET", "POST"])
+def jogo_cartas():
+    if not usuario_logado():
+        return redirect(url_for("login"))
+    REGRAS = {'Y':'Y','A':'Z','Z':'A','B':'X','X':'B','C':'G','G':'C','D':'F','F':'D','E':'E'}
+    CARTAS = ['Y','A','B','C','D','E','F','G','X','Z']
+    
+    if "cartas_fase" not in session: session["cartas_fase"] = 1
+    if "cartas_pontos" not in session: session["cartas_pontos"] = 0
+    fase = session["cartas_fase"]
+    pontos = session["cartas_pontos"]
+    qtd = {1:3,2:6,3:8,4:9}[fase]
+    valor = {1:100,2:300,3:500,4:1000}[fase]
+    
+    if "cartas_alvo" not in session or len(session.get("cartas_alvo",[])) != qtd:
+        session["cartas_alvo"] = random.sample(CARTAS, qtd)
+        session["cartas_resposta"] = []
+    alvo = session["cartas_alvo"]
+    resposta = session["cartas_resposta"]
+    msg = ""
+    
+    if request.method == "POST":
+        if "nova" in request.form:
+            session["cartas_alvo"] = random.sample(CARTAS, qtd)
+            session["cartas_resposta"] = []
+        elif "selecionar" in request.form:
+            resposta.append(request.form["selecionar"])
+            session["cartas_resposta"] = resposta
+        elif "verificar" in request.form:
+            if len(resposta) != len(alvo):
+                msg = "❌ Selecione todas!"
+            else:
+                correta = [REGRAS[c] for c in alvo]
+                if resposta == correta:
+                    pontos += valor
+                    session["cartas_pontos"] = pontos
+                    msg = f"✅ ACERTOU! +{valor} PONTOS!"
+                    try:
+                        conn, db_type = get_db()
+                        c = conn.cursor()
+                        param = "%s" if db_type == "postgres" else "?"
+                        c.execute(f"UPDATE usuarios SET pontos = pontos + {param} WHERE id = {param}", (valor, session["usuario_id"]))
+                        conn.commit()
+                        conn.close()
+                    except: pass
+                    if fase < 4:
+                        session["cartas_fase"] += 1
+                        session.pop("cartas_alvo", None)
+                    else:
+                        msg = "🏆 VENCEU!"
+                        session["cartas_fase"] = 1
+                        session.pop("cartas_alvo", None)
+                else:
+                    msg = "❌ Errou!"
+                    session["cartas_resposta"] = []
+                    
+    alvo_html = "".join([f"<span style='background:#f59e0b;color:black;padding:12px 18px;border-radius:8px;margin:5px;font-size:24px;font-weight:bold;'>{c}</span>" for c in alvo])
+    resp_html = "".join([f"<span style='background:#22c55e;color:black;padding:12px 18px;border-radius:8px;margin:5px;font-size:24px;font-weight:bold;'>{c}</span>" for c in resposta]) if resposta else "<p style='color:#94a3b8;'>Clique nas cartas...</p>"
+    disp_html = "".join([f"<button type='submit' name='selecionar' value='{c}' style='background:#33415e;color:white;padding:12px 18px;border-radius:8px;margin:5px;font-size:24px;font-weight:bold;border:2px solid #f59e0b;cursor:pointer;'>{c}</button>" for c in CARTAS])
+    
+    return render_template_string(f'''<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>🃏 Jogo das Cartas</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="p-6 max-w-2xl mx-auto bg-gray-900 text-gray-200">
+    <a href="/plataforma" class="text-yellow-500 font-bold">← Voltar</a>
+    <h1 class="text-4xl font-bold text-yellow-500 text-center my-6">🃏 Jogo das Cartas</h1>
+    <p class="text-center text-lg mb-4">Fase {fase}/4 · Pontos: {pontos}</p>
+    {f'<div class="text-center p-3 rounded-lg mb-4 text-lg font-bold {"bg-green-900/50 text-green-400" if "✅" in msg or "🏆" in msg else "bg-red-900/50 text-red-400"}">{msg}</div>' if msg else ''}
+    <div class="bg-gray-800 p-5 rounded-lg border border-yellow-500/30 mb-5">
+        <p class="text-center mb-3 text-gray-400">🎯 Cartas Alvo:</p>
+        <div class="flex flex-wrap justify-center">{alvo_html}</div>
+    </div>
+    <div class="bg-gray-800 p-5 rounded-lg border border-green-500/30 mb-5">
+        <p class="text-center mb-3 text-gray-400">✅ Sua Resposta:</p>
+        <div class="flex flex-wrap justify-center">{resp_html}</div>
+    </div>
+    <form method="POST" class="bg-gray-800 p-5 rounded-lg border border-yellow-500/30 mb-5">
+        <p class="text-center mb-3 text-gray-400">🃏 Clique para selecionar:</p>
+        <div class="flex flex-wrap justify-center">{disp_html}</div>
+    </form>
+    <div class="flex gap-3 justify-center">
+        <form method="POST"><button type="submit" name="verificar" class="bg-green-600 text-white font-bold px-6 py-3 rounded-lg">✅ Verificar</button></form>
+        <form method="POST"><button type="submit" name="nova" class="bg-yellow-600 text-black font-bold px-6 py-3 rounded-lg">🔄 Novas</button></form>
+    </div>
+</body>
+</html>''')
 
+@app.route("/jogo_bentinho", methods=["GET", "POST"])
+def jogo_bentinho():
+    if not usuario_logado():
+        return redirect(url_for("login"))
+    
+    TABELA = {'0':'0', '1':'9', '2':'8', '3':'7', '4':'6', '5':'5', '6':'4', '7':'3', '8':'2', '9':'1'}
+    def inverter(num): 
+        return "".join(TABELA.get(str(d), d) for d in str(num))
+    
+    if "bent_fase" not in session: session["bent_fase"] = 1
+    if "bent_pontos" not in session: session["bent_pontos"] = 0
+        
+    fase_atual = int(session.get("bent_fase", 1))
+    tamanhos = {1: 3, 2: 6, 3: 8, 4: 9}
+    tam = tamanhos.get(fase_atual, 3)
+    
+    if "bent_num" not in session or session.get("bent_fase_atual") != fase_atual:
+        session["bent_num"] = "".join(random.choice("0123456789") for _ in range(tam))
+        session["bent_alvo"] = inverter(session["bent_num"])
+        session["bent_fase_atual"] = fase_atual
+
+    msg = ""
+    PTS = {1: 250000, 2: 2500000, 3: 25000000, 4: 1000000000}
+    
+    if request.method == "POST":
+        acao = request.form.get("acao", "")
+        if acao == "reiniciar":
+            session["bent_fase"] = 1
+            session["bent_pontos"] = 0
+            session.pop("bent_num", None)
+            session.pop("bent_fase_atual", None)
+            return redirect(url_for("jogo_bentinho"))
+            
+        resp = request.form.get("resposta", "").strip()
+        alvo_salvo = session.get("bent_alvo", "")
+        
+        if resp and resp == alvo_salvo:
+            pts = PTS.get(fase_atual, 250000)
+            session["bent_pontos"] += pts
+            msg = f" ACERTOU! +{pts:,} PONTOS!"
+            try:
+                conn, db_type = get_db()
+                c = conn.cursor()
+                param = "%s" if db_type == "postgres" else "?"
+                c.execute(f"UPDATE usuarios SET pontos_bentinho = pontos_bentinho + {param} WHERE id = {param}", (pts, session["usuario_id"]))
+                conn.commit()
+                conn.close()
+            except: pass
+                
+            if fase_atual < 4:
+                session["bent_fase"] = fase_atual + 1
+                session.pop("bent_num", None)
+                session.pop("bent_fase_atual", None)
+            else:
+                msg = "🏆 PARABÉNS! 1.000.000.000 DE PONTOS!"
+                session["bent_fase"] = 1
+                session["bent_pontos"] = 0
+                session.pop("bent_num", None)
+                session.pop("bent_fase_atual", None)
+        else:
+            msg = "❌ Errou! Tente novamente."
+
+    num_exibicao = session.get("bent_num", "000")
+    pontos_atuais = session.get("bent_pontos", 0)
+
+    return render_template_string(f'''<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>🎮 Segredo dos Números</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="flex items-center justify-center p-4 bg-gray-900 text-gray-200 min-h-screen">
+    <div class="bg-gray-800 p-8 rounded-xl border-2 border-yellow-500/50 max-w-lg w-full">
+        <h1 class="text-3xl font-bold text-yellow-500 text-center mb-2">🎮 SEGREDO DOS NÚMEROS</h1>
+        <p class="text-center text-gray-400 mb-6">Fase {fase_atual}/4 · Pontos: {pontos_atuais:,}</p>
+        {f'<div class="text-center p-4 rounded-lg mb-6 text-lg font-bold {"bg-green-900/50 text-green-400" if "✅" in msg or "🏆" in msg else "bg-red-900/50 text-red-400"}">{msg}</div>' if msg else ''}
+        <div class="bg-gray-900 border-2 border-yellow-500/40 rounded-lg p-6 text-center mb-6">
+            <p class="text-gray-400 mb-2">Número:</p>
+            <p class="text-5xl font-mono text-yellow-400 font-bold tracking-widest">{num_exibicao}</p>
+        </div>
+        <form method="POST" class="space-y-4">
+            <input type="text" name="resposta" placeholder="Digite o inverso..." class="w-full bg-gray-900 border-2 border-yellow-500 rounded-lg text-center text-2xl text-yellow-400 p-3 font-mono" autocomplete="off" required>
+            <div class="flex gap-3">
+                <button type="submit" class="flex-1 bg-yellow-600 text-black font-bold py-3 rounded-lg text-lg">✅ Decifrar</button>
+                <button type="submit" name="acao" value="reiniciar" class="bg-gray-600 text-white px-6 py-3 rounded-lg font-bold">🔄 Reiniciar</button>
+            </div>
+        </form>
+        <p class="text-center mt-6"><a href="/plataforma" class="text-yellow-500 font-bold">← Voltar</a></p>
+    </div>
+</body>
+</html>''')
+
+# -------------------------------------------------------------------
+# EXECUÇÃO DO APP
+# -------------------------------------------------------------------
 if __name__ == "__main__":
-    app.run(
-        host="0.0.0.0",
-        port=int(os.environ.get("PORT", 5000)),
-        debug=False
-    )
+    porta = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=porta, debug=True)
